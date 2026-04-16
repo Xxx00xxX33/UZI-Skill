@@ -177,7 +177,7 @@ def main():
 
     print()
     print("━" * 50)
-    print("🎯 游资（UZI）Skills v2.0 · 深度分析引擎")
+    print("🎯 游资（UZI）Skills v2.2 · 深度分析引擎")
     print(f"   目标: {args.ticker}")
     print(f"   环境: {'Codex' if env['is_codex'] else 'Docker' if env['is_docker'] else 'SSH' if env['is_ssh'] else '本地'}")
     print(f"   浏览器: {'✓' if env['has_browser'] and not args.no_browser else '✗ (headless)'}")

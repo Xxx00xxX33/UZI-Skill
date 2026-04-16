@@ -1,6 +1,30 @@
 # Release Notes
 
-## v2.1.0 (develop) — 2026-04-16
+## v2.2.0 (develop) — 2026-04-16
+
+### Agent Closed-Loop (核心改动)
+- **`agent_analysis.json`**: 新增闭环文件，agent 的定性分析独立存储
+- **`generate_synthesis()` 合并机制**: 优先使用 agent 写入的字段，仅对缺失字段生成 stub
+- **`stage2()` 自动读取**: 读取 `agent_analysis.json` 并传给 `generate_synthesis` 合并
+- **`agent_reviewed` 标记**: synthesis 输出带标记，明确标识是否有 agent 介入
+- **HARD-GATE 增强**: 必须写 `agent_analysis.json` + 设置 `agent_reviewed: true` 才能进 stage2
+- **合并优先级**: agent dim_commentary > stub，agent punchline > 脚本金句，agent risks > 低分维度生成
+
+### Agent 可覆盖字段
+- `dim_commentary` — 每维度定性评语
+- `panel_insights` — 评委整体观察
+- `great_divide_override.punchline` — 冲突金句
+- `great_divide_override.bull_say_rounds` / `bear_say_rounds` — 辩论 3 轮
+- `narrative_override.core_conclusion` — 综合结论
+- `narrative_override.risks` — 风险列表
+- `narrative_override.buy_zones` — 四派买入区间
+
+### Bug Fixes
+- Fixed: `main()` 函数 `standalone_path` 不在作用域（NameError）
+
+---
+
+## v2.1.0 — 2026-04-16
 
 ### Architecture
 - **Two-stage pipeline**: `stage1()` (data + skeleton) → agent analysis → `stage2()` (report)

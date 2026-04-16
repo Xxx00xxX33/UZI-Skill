@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo \"🎯 游资（UZI）Skills v2.0 已加载 · 说 '分析 XXX' 开始深度分析 · /analyze-stock <代码> 完整报告\"",
+            "command": "echo \"🎯 游资（UZI）Skills v2.2 已加载 · 说 '分析 XXX' 开始深度分析 · /analyze-stock <代码> 完整报告\"",
             "async": false
           }
         ]

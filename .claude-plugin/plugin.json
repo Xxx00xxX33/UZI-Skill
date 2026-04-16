@@ -1,6 +1,6 @@
 {
   "name": "stock-deep-analyzer",
-  "version": "2.0.0",
+  "version": "2.2.0",
   "description": "A 股/港股/美股个股深度分析引擎 · 22 维数据 × 51 位大佬量化评委 × 17 种机构级分析方法 (DCF/Comps/LBO/3-Stmt/IC Memo/Porter/催化剂日历) · 杀猪盘检测 · Bloomberg 风格 HTML 报告",
   "author": {
     "name": "FloatFu-true"
