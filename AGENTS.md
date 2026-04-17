@@ -187,6 +187,43 @@ curl -sS --max-time 5 -o /dev/null -w "mx: %{http_code}\n" https://mkapi2.dfcfs.
 
 根据哪些通/哪些不通，决定走哪个数据链。
 
+## 📚 数据源速查表（v2.5 新增）
+
+完整源清单在 `lib/data_source_registry.py`（40+ 源 · 3 tier）。常见 dim 推荐路径如下，
+agent 选择源时按"主源 → 备源 → 浏览器源"顺序，failed 自动 fallthrough：
+
+| Dim | A 股 主源 | A 股 备源 | A 股 浏览器源 | H 股主源 |
+|---|---|---|---|---|
+| 0_basic | xq_api (akshare) | mx_api / em_quote | xueqiu_f10 | hk_data_sources combined (XQ + EM profile + EM valuation) |
+| 2_kline | em_data + akshare | baostock / tencent_qt | — | akshare hk_hist |
+| 4_peers | akshare board_industry | em_data | iwencai / ths_f10 | hk_valuation_comparison_em (rank-only) + AASTOCKS (Playwright) |
+| 6_research | em_data + cninfo | hexun / stockstar | xueqiu_f10 | (HK 限) yicai / cls |
+| 12_capital_flow | em_data 北向 + akshare | — | yuncaijing | hk_security_profile (港股通标记) + AASTOCKS Playwright |
+| 13_policy | gov_cn + cninfo | csrc / miit / ndrc | — | (同 A) + cls 7x24 + wallstreetcn |
+| 15_events | cninfo + em_data | xq_api / cls / yicai | xueqiu_f10 | hkexnews + AASTOCKS Playwright |
+| 16_lhb | akshare lhb + em_data | — | yuncaijing | (HK 无 LHB 概念，看南北向替代) |
+| 17_sentiment | xq_api / ddgs | wallstreetcn | xueqiu_f10 | futu (Playwright) / xq_api |
+
+**用法（在 sub-agent prompt 里）**：
+```python
+from lib.data_source_registry import http_sources_for, playwright_sources_for, by_dim
+
+# Tier-1 HTTP 源，按 health 排序
+sources = http_sources_for("4_peers", "A")
+for s in sources:
+    print(s.id, s.base_url, s.health, s.notes)
+
+# 当 HTTP 全失败时，agent 启动 Playwright 用 tier-2 源：
+browser_sources = playwright_sources_for("4_peers", "A")
+```
+
+**港股增强（v2.5 新加）**：
+- `lib/hk_data_sources.py` 包装了之前未用到的 50+ akshare HK 函数
+- `_fetch_basic_hk` 现在能拿到 industry / PE / PB / 市值 / 排名 / 公司介绍
+- `fetch_peers.py` HK 分支返回 rank-in-HK-universe（具体同行 list 走 AASTOCKS Playwright）
+- `fetch_capital_flow.py` HK 分支返回港股通资格 + 30 日市值变化
+- `fetch_events.py` HK 分支抓 HKEXNews + 中文 web search 兜底
+
 ## 注意
 
 - A 股：`600519.SH` / `002273.SZ` / `贵州茅台`

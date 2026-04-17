@@ -249,46 +249,87 @@ DCF 和 SOTP 分歧 → 买入机会或假突破？
 **注意**：`push2.eastmoney.com` 和 `82.push2.eastmoney.com` 2026 年经常被反爬，优先用下面
 列出的可用域。
 
-### Dim 3 · 宏观
+> **完整源清单见 `lib/data_source_registry.py`**。Agent 可在 sub-agent 里直接 import：
+> ```python
+> from lib.data_source_registry import http_sources_for, playwright_sources_for
+> primary = http_sources_for("4_peers", "A")          # tier-1 HTTP 源
+> browser_only = playwright_sources_for("4_peers", "A")  # tier-2 浏览器源（雪球/问财/同花顺 F10）
+> ```
+> 用注册表的好处：每个源带 `health` 标记 ("known_good"/"flaky"/"blocked_often"/"needs_browser")，agent 自己挑。
+
+### Dim 3 · 宏观（v2.5 扩充）
 ```
 https://data.eastmoney.com/hsgt/board.html         (北向/南向资金面板)
 https://data.eastmoney.com/hgt/zb.html             (汇率)
 https://data.eastmoney.com/cjsj/pmi.html           (PMI)
 https://data.eastmoney.com/cjsj/cpi.html           (CPI)
-https://www.chinamoney.com.cn/chinese/               (中债)
+https://www.chinamoney.com.cn/chinese/             (中债)
+https://wallstreetcn.com/                          (华尔街见闻 · 海外联动 + 快讯)
+https://www.yicai.com/                             (第一财经 · 宏观与产业专题)
+https://www.investing.com/economic-calendar/       (Investing 经济日历 · 海外宏观)
+https://www.investing.com/commodities/             (Investing 商品 · 大宗联动)
 ```
 
-### Dim 7 · 行业
+### Dim 4 · 同行（v2.5 新加 · A 股原 fetcher 已有，agent 可补充非 A 股或需 NLP 筛选场景）
 ```
-https://xueqiu.com/S/{code}/F10/industry           (雪球 F10 行业信息)
-https://data.eastmoney.com/bkzj/                    (板块资金)
-https://www.iresearch.com.cn/                       (艾瑞)
+A 股：
+https://www.iwencai.com/                           (问财 NLP · 需 Playwright；'同行业 市值>100亿' 类查询)
+https://stockpage.10jqka.com.cn/                   (同花顺 F10 · 需 Playwright；行业/概念板块 + 同行)
+
+港股：
+https://www.aastocks.com/sc/stocks/analysis/industry/  (AASTOCKS · 港股按行业列表 · 需 Playwright)
+```
+
+### Dim 7 · 行业（v2.5 扩充）
+```
+https://xueqiu.com/S/{code}/F10/industry           (雪球 F10 行业信息 · 需 Playwright)
+https://data.eastmoney.com/bkzj/                   (板块资金)
+https://www.iresearch.com.cn/                      (艾瑞 · 互联网行业)
+https://www.iwencai.com/                           (问财 · NLP 筛选行业内成员)
+https://stockpage.10jqka.com.cn/                   (同花顺 F10 · 行业景气度)
 ```
 
 ### Dim 8/9 · 大宗 & 期货
 ```
-https://data.eastmoney.com/futures/index.html      (期货总览)
-https://www.shfe.com.cn/data/dailydata/            (上期所日报)
-https://www.dce.com.cn/                             (大商所)
-https://www.czce.com.cn/                            (郑商所)
-https://www.100ppi.com/                             (生意社 · 现货)
+https://data.eastmoney.com/futures/index.html     (期货总览)
+https://www.shfe.com.cn/data/dailydata/           (上期所日报)
+https://www.dce.com.cn/                           (大商所)
+https://www.czce.com.cn/                          (郑商所)
+https://www.100ppi.com/                           (生意社 · 现货)
+https://www.investing.com/commodities/            (海外大宗联动)
 ```
 
-### Dim 13 · 政策
+### Dim 13 · 政策（v2.5 扩充）
 ```
-https://www.gov.cn/zhengce/                         (国务院政策)
-http://www.csrc.gov.cn/csrc/c106187/common_list.shtml  (证监会监管动态)
-https://www.miit.gov.cn/                            (工信部)
-https://www.ndrc.gov.cn/xxgk/jd/                    (发改委政策解读)
-https://www.samr.gov.cn/                            (市场监管总局 · 反垄断)
+https://www.gov.cn/zhengce/                                  (国务院政策)
+http://www.csrc.gov.cn/csrc/c106187/common_list.shtml        (证监会监管动态)
+https://www.miit.gov.cn/                                     (工信部)
+https://www.ndrc.gov.cn/xxgk/jd/                             (发改委政策解读)
+https://www.samr.gov.cn/                                     (市场监管总局 · 反垄断)
+https://www.cls.cn/                                          (财联社 7x24 · 政策电报第一时间)
+https://wallstreetcn.com/                                    (华尔街见闻 · 海外政策 + 国际反应)
 ```
 
-### Dim 15 · 事件
+### Dim 15 · 事件（v2.5 扩充）
 ```
-http://www.cninfo.com.cn/new/disclosure/stock?stockCode={code_raw}  (巨潮)
-https://xueqiu.com/S/{code_raw}/announcements       (雪球公告聚合)
-https://www.eastmoney.com/                          (东财首页搜索)
+A 股：
+http://www.cninfo.com.cn/new/disclosure/stock?stockCode={code_raw}  (巨潮 · 公告法定原文)
+https://xueqiu.com/S/{code_raw}/announcements                       (雪球公告聚合)
 http://vip.stock.finance.sina.com.cn/corp/go.php/vCB_AllBulletin/stockid/{code_raw}.phtml  (新浪)
+https://www.cls.cn/                                                  (财联社 7x24 · 突发事件最快)
+https://www.yicai.com/                                               (第一财经 · 公司频道)
+https://stock.jrj.com.cn/                                            (金融界 · 题材联动)
+https://money.163.com/                                               (网易财经 · 新闻聚合)
+
+港股：
+https://www1.hkexnews.hk/search/titlesearch.xhtml?lang=zh&stockId={int_code}  (HKEXNews · 法定披露)
+https://www.aastocks.com/sc/cnhk/news/company-news/{code}.html                (AASTOCKS 港股新闻)
+```
+
+### Dim 16 · 龙虎榜（v2.5 新加）
+```
+https://data.eastmoney.com/stock/lhb.html          (东财龙虎榜)
+https://www.yuncaijing.com/data/lhb/main.html      (云财经龙虎榜 · 游资席位 + 题材热度)
 ```
 
 ---
