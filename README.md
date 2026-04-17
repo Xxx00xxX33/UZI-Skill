@@ -25,7 +25,7 @@ A 股 / 港股 / 美股 · 个股深度分析引擎
 当前版本还不太稳定，论坛反馈 bug 比较多。如果你有兴趣帮忙更快地测试效果，或者想交流使用中的问题和建议，欢迎扫码进群与我沟通（主要是帮我测试 ✌️），如果你想体验最新效果，可以切换到develop分支～
 
 <p align="center">
-  <img src="docs/screenshots/wechat-group.jpg" width="300" alt="微信群二维码" />
+  <img src="docs/screenshots/b9857c297761d9420c45285b4fce2255.jpg" width="300" alt="微信群二维码" />
 </p>
 
 > 二维码会定期过期，如果扫码失败请提 Issue 或在论坛留言，我会更新。
