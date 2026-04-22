@@ -3,7 +3,7 @@
 v2.10.2 原版只测 5 个国内 TCP connect · 无法区分"国内通 + 境外不通"等常见大陆无代理场景.
 
 v2.13.5 升级：
-- 9 个目标分 3 组（国内 / 境外 / 搜索）
+- 多个目标分 3 组（国内 / 境外 / 搜索）
 - 检测代理 env（HTTP_PROXY / HTTPS_PROXY / ALL_PROXY / NO_PROXY）
 - 输出结构化 `NetworkProfile` 供 agent + DIM_STRATEGIES 自适应
 - 写 `.cache/_global/network_profile.json` 让 agent 介入阶段可读
@@ -16,6 +16,7 @@ v2.13.5 升级：
     else:
         url = "https://xueqiu.com/..."  # 降级到国内
 """
+
 from __future__ import annotations
 
 import json
@@ -37,11 +38,9 @@ class DomainCheck:
 
 
 # ───────────────────────────────────────────────────────────────
-# 目标清单 · 3 组 × 3 域 = 9 目标
-# ───────────────────────────────────────────────────────────────
-
 _DOMESTIC_TARGETS = [
     ("push2.eastmoney.com", "东财 push2 · A 股行情主源"),
+    ("mkapi2.dfcfs.com", "妙想 API · 官方 NLP / 海外更稳"),
     ("www.cninfo.com.cn", "巨潮 cninfo · 公告/行业 PE"),
     ("stock.xueqiu.com", "雪球数据"),
 ]
@@ -69,21 +68,23 @@ _ALL_TARGETS: list[tuple[str, str, str]] = (
 # NetworkProfile · 结构化输出
 # ───────────────────────────────────────────────────────────────
 
+
 @dataclass
 class NetworkProfile:
     """v2.13.5 · 网络情况的结构化画像 · 供 agent 和 DIM_STRATEGIES 自适应."""
+
     domestic_ok: bool = False
     overseas_ok: bool = False
     search_ok: bool = False
     has_proxy: bool = False  # HTTP_PROXY / HTTPS_PROXY / ALL_PROXY 任一设置
     proxy_url: str = ""
-    domestic_count: int = 0   # 通的数量（0-3）
+    domestic_count: int = 0
     overseas_count: int = 0
     search_count: int = 0
     avg_latency_ms: int = 0
     recommendation: str = ""  # 给 agent 看的一句话建议
-    severity: str = "ok"      # ok | warning | degraded | critical
-    probed_at: float = 0.0    # unix timestamp
+    severity: str = "ok"  # ok | warning | degraded | critical
+    probed_at: float = 0.0  # unix timestamp
     checks: list = field(default_factory=list)  # List[dict] (asdict(DomainCheck))
     # v2.15.2 (#30) · 更细的自检信息
     local_proxy: dict = field(default_factory=dict)  # {has_local_proxy, detected, hint}
@@ -105,27 +106,47 @@ def _probe(domain: str, port: int = 443, timeout: float = 3.0) -> DomainCheck:
         sock = socket.create_connection((domain, port), timeout=timeout)
         sock.close()
         return DomainCheck(
-            domain=domain, group="", reachable=True,
+            domain=domain,
+            group="",
+            reachable=True,
             latency_ms=int((time.time() - t0) * 1000),
         )
     except socket.gaierror as e:
-        return DomainCheck(domain=domain, group="", reachable=False,
-                           latency_ms=int((time.time() - t0) * 1000),
-                           error=f"DNS fail: {e}")
+        return DomainCheck(
+            domain=domain,
+            group="",
+            reachable=False,
+            latency_ms=int((time.time() - t0) * 1000),
+            error=f"DNS fail: {e}",
+        )
     except socket.timeout:
-        return DomainCheck(domain=domain, group="", reachable=False,
-                           latency_ms=int(timeout * 1000),
-                           error=f"timeout > {timeout}s")
+        return DomainCheck(
+            domain=domain,
+            group="",
+            reachable=False,
+            latency_ms=int(timeout * 1000),
+            error=f"timeout > {timeout}s",
+        )
     except Exception as e:
-        return DomainCheck(domain=domain, group="", reachable=False,
-                           latency_ms=int((time.time() - t0) * 1000),
-                           error=f"{type(e).__name__}: {str(e)[:80]}")
+        return DomainCheck(
+            domain=domain,
+            group="",
+            reachable=False,
+            latency_ms=int((time.time() - t0) * 1000),
+            error=f"{type(e).__name__}: {str(e)[:80]}",
+        )
 
 
 def _detect_proxy() -> tuple[bool, str]:
     """从 env 检测代理配置 · 返 (has_proxy, proxy_url)."""
-    for var in ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY",
-                "https_proxy", "http_proxy", "all_proxy"):
+    for var in (
+        "HTTPS_PROXY",
+        "HTTP_PROXY",
+        "ALL_PROXY",
+        "https_proxy",
+        "http_proxy",
+        "all_proxy",
+    ):
         v = os.environ.get(var, "").strip()
         if v and v.lower() not in ("off", "no", "false"):
             return True, f"{var}={v}"
@@ -249,6 +270,13 @@ def diagnose_source(profile: "NetworkProfile") -> list[dict]:
 
 def _build_recommendation(p: NetworkProfile) -> tuple[str, str]:
     """根据 profile 生成 agent-facing 建议文本 + severity."""
+    mx_ok = any(
+        isinstance(c, dict)
+        and c.get("domain") == "mkapi2.dfcfs.com"
+        and c.get("reachable")
+        for c in p.checks
+    )
+
     # severity
     if p.domestic_count >= 2 and p.overseas_count >= 2 and p.search_count >= 2:
         sev = "ok"
@@ -266,22 +294,31 @@ def _build_recommendation(p: NetworkProfile) -> tuple[str, str]:
         rec = (
             "✓ 国内网络正常 · ✗ 境外受限 · "
             "Playwright 只抓国内源（东财 F10 / cninfo / 雪球 public / 百度搜索）· "
-            "跳过 Yahoo / CoinGecko / 英文 Wikipedia"
+            "跳过 Yahoo / CoinGecko / 英文 Wikipedia；"
+            "若 push2 不稳，优先启用 MX_APIKEY 走 mkapi2.dfcfs.com"
         )
     elif p.domestic_ok and not p.overseas_ok and not p.search_ok:
         rec = (
             "⚠ 国内通 · 搜索受限 · 境外不通 · "
             "Playwright 只抓国内无搜索依赖的源（东财 F10 / cninfo / 雪球 page）· "
-            "跳 baidu/百度搜索/Yahoo/CoinGecko"
+            "跳 baidu/百度搜索/Yahoo/CoinGecko；"
+            "若行情主链超时，优先 MX_APIKEY + lite/medium"
         )
     elif not p.domestic_ok and p.overseas_ok:
-        rec = (
-            "⚠ 境外 VPN 环境 · 国内源受限 · "
-            "Playwright 可抓 Yahoo/CoinGecko · 但不抓东财 push2（国内限外 IP）· "
-            "建议 akshare 配合用 xueqiu fallback"
-        )
+        if mx_ok:
+            rec = (
+                "⚠ 境外环境 · 传统国内源受限 · 妙想 API 可达 · "
+                "优先启用 MX_APIKEY 走 mkapi2.dfcfs.com 做中文名纠错/快照/新闻；"
+                "Playwright 可抓 Yahoo/CoinGecko，继续跳过 push2"
+            )
+        else:
+            rec = (
+                "⚠ 境外 VPN 环境 · 国内源受限 · "
+                "优先启用 MX_APIKEY（mkapi2.dfcfs.com）替代 push2；"
+                "Playwright 可抓 Yahoo/CoinGecko · 但不抓东财 push2（国内限外 IP）"
+            )
     elif p.domestic_count >= 1:
-        rec = "⚠ 网络不稳 · 建议 --depth lite + 跳过 Playwright 省时间"
+        rec = "⚠ 网络不稳 · 建议 --depth lite；若已配置 MX_APIKEY，优先走 mkapi2.dfcfs.com"
     else:
         rec = "🔴 网络严重不通 · 建议退出修网络 · lite 模式也会失败"
 
@@ -315,7 +352,7 @@ def run_preflight(verbose: bool = True, timeout: float = 3.0) -> NetworkProfile:
     local_proxy_info = _detect_local_proxy()
 
     prof = NetworkProfile(
-        domestic_ok=dom_ok >= 2,        # 3 个有 2 个通算 ok
+        domestic_ok=dom_ok >= 2,
         overseas_ok=ovs_ok >= 2,
         search_ok=sch_ok >= 2,
         has_proxy=has_proxy,
@@ -335,8 +372,10 @@ def run_preflight(verbose: bool = True, timeout: float = 3.0) -> NetworkProfile:
     if verbose:
         total = len(results)
         reachable_count = sum(1 for r in results if r.reachable)
-        print(f"\n🌐 网络预检 ({reachable_count}/{total} 通 · 均延迟 {avg_lat}ms · "
-              f"proxy={'yes' if has_proxy else 'no'})")
+        print(
+            f"\n🌐 网络预检 ({reachable_count}/{total} 通 · 均延迟 {avg_lat}ms · "
+            f"proxy={'yes' if has_proxy else 'no'})"
+        )
         groups = [("国内", "domestic"), ("境外", "overseas"), ("搜索", "search")]
         for label, g in groups:
             grp = [r for r in results if r.group == g]
@@ -395,10 +434,12 @@ def get_network_profile(max_age_sec: int = 300) -> NetworkProfile:
 def run_preflight_legacy_dict(verbose: bool = True, timeout: float = 3.0) -> dict:
     """兼容 v2.10.2 的 dict 返回格式."""
     prof = run_preflight(verbose=verbose, timeout=timeout)
+    total_targets = len(_ALL_TARGETS)
+    reachable = prof.domestic_count + prof.overseas_count + prof.search_count
     return {
-        "reachable": prof.domestic_count + prof.overseas_count + prof.search_count,
-        "failures": 9 - (prof.domestic_count + prof.overseas_count + prof.search_count),
-        "critical_failures": 9 - (prof.domestic_count + prof.overseas_count + prof.search_count),
+        "reachable": reachable,
+        "failures": total_targets - reachable,
+        "critical_failures": total_targets - reachable,
         "avg_latency_ms": prof.avg_latency_ms,
         "advisory": prof.recommendation,
         "severity": prof.severity,
@@ -408,4 +449,6 @@ def run_preflight_legacy_dict(verbose: bool = True, timeout: float = 3.0) -> dic
 
 if __name__ == "__main__":
     prof = run_preflight(verbose=True)
-    print(f"\n[JSON summary]\n{json.dumps(prof.to_dict(), ensure_ascii=False, indent=2)[:800]}")
+    print(
+        f"\n[JSON summary]\n{json.dumps(prof.to_dict(), ensure_ascii=False, indent=2)[:800]}"
+    )

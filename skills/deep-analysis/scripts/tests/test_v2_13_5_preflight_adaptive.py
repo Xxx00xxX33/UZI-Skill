@@ -5,6 +5,7 @@
 2. DIM_STRATEGIES 按 network 自适应过滤
 3. SKILL.md + AGENTS.md 含 HARD-GATE-PLAYWRIGHT-AUTOFILL
 """
+
 from __future__ import annotations
 
 import importlib
@@ -22,16 +23,26 @@ sys.path.insert(0, str(SCRIPTS))
 
 
 def _reset_env():
-    for k in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy",
-              "https_proxy", "all_proxy", "UZI_PLAYWRIGHT_ENABLE",
-              "UZI_PLAYWRIGHT_FORCE", "UZI_DEPTH"):
+    for k in (
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "UZI_PLAYWRIGHT_ENABLE",
+        "UZI_PLAYWRIGHT_FORCE",
+        "UZI_DEPTH",
+    ):
         os.environ.pop(k, None)
 
 
 # ─── Layer 1 · NetworkProfile ─────────────────────────────────────
 
+
 def test_network_profile_dataclass_exists():
     from lib.network_preflight import NetworkProfile
+
     assert hasattr(NetworkProfile, "domestic_ok")
     assert hasattr(NetworkProfile, "overseas_ok")
     assert hasattr(NetworkProfile, "search_ok")
@@ -41,6 +52,7 @@ def test_network_profile_dataclass_exists():
 
 def test_detect_proxy_from_env():
     from lib.network_preflight import _detect_proxy
+
     _reset_env()
     has, url = _detect_proxy()
     assert has is False
@@ -55,6 +67,7 @@ def test_detect_proxy_from_env():
 
 def test_detect_proxy_ignores_lowercase_off():
     from lib.network_preflight import _detect_proxy
+
     _reset_env()
     os.environ["http_proxy"] = "off"
     has, _ = _detect_proxy()
@@ -64,6 +77,7 @@ def test_detect_proxy_ignores_lowercase_off():
 
 def test_run_preflight_writes_cache_json():
     from lib.network_preflight import run_preflight
+
     _reset_env()
     # mock _probe so network tests don't hit real net
     from lib import network_preflight as np
@@ -86,45 +100,112 @@ def test_run_preflight_writes_cache_json():
 
 def test_recommendation_varies_by_profile():
     from lib.network_preflight import NetworkProfile, _build_recommendation
+
     # 国内通 + 境外受限 · 典型大陆无代理
     p = NetworkProfile(
-        domestic_ok=True, overseas_ok=False, search_ok=True,
-        domestic_count=3, overseas_count=0, search_count=2,
+        domestic_ok=True,
+        overseas_ok=False,
+        search_ok=True,
+        domestic_count=3,
+        overseas_count=0,
+        search_count=2,
     )
     rec, sev = _build_recommendation(p)
     assert "国内" in rec and "境外" in rec
     assert "Playwright" in rec
 
     # 全通
-    p2 = NetworkProfile(domestic_ok=True, overseas_ok=True, search_ok=True,
-                        domestic_count=3, overseas_count=3, search_count=3)
+    p2 = NetworkProfile(
+        domestic_ok=True,
+        overseas_ok=True,
+        search_ok=True,
+        domestic_count=3,
+        overseas_count=3,
+        search_count=3,
+    )
     rec2, sev2 = _build_recommendation(p2)
     assert sev2 == "ok"
 
     # 全不通
-    p3 = NetworkProfile(domestic_ok=False, overseas_ok=False, search_ok=False,
-                        domestic_count=0, overseas_count=0, search_count=0)
+    p3 = NetworkProfile(
+        domestic_ok=False,
+        overseas_ok=False,
+        search_ok=False,
+        domestic_count=0,
+        overseas_count=0,
+        search_count=0,
+    )
     rec3, sev3 = _build_recommendation(p3)
     assert sev3 == "critical"
 
 
+def test_preflight_includes_mx_domain_and_guidance():
+    from lib import network_preflight as np
+
+    assert any(domain == "mkapi2.dfcfs.com" for domain, _ in np._DOMESTIC_TARGETS)
+
+    p = np.NetworkProfile(
+        domestic_ok=False,
+        overseas_ok=True,
+        search_ok=True,
+        domestic_count=1,
+        overseas_count=3,
+        search_count=3,
+        checks=[
+            {"domain": "mkapi2.dfcfs.com", "reachable": True},
+        ],
+    )
+    rec, _ = np._build_recommendation(p)
+    assert "MX_APIKEY" in rec
+    assert "mkapi2.dfcfs.com" in rec
+
+
+def test_run_preflight_legacy_dict_uses_dynamic_target_count():
+    from lib import network_preflight as np
+
+    def fake_probe(domain, port=443, timeout=3.0):
+        reachable = domain in {
+            "mkapi2.dfcfs.com",
+            "query1.finance.yahoo.com",
+            "duckduckgo.com",
+        }
+        return np.DomainCheck(
+            domain=domain, group="", reachable=reachable, latency_ms=5
+        )
+
+    with patch.object(np, "_probe", side_effect=fake_probe):
+        data = np.run_preflight_legacy_dict(verbose=False)
+
+    assert data["reachable"] == 3
+    assert data["failures"] == len(np._ALL_TARGETS) - 3
+    assert data["critical_failures"] == len(np._ALL_TARGETS) - 3
+
+
 def test_get_network_profile_uses_cache():
     from lib import network_preflight as np
+
     # 手写一个 fresh profile 到 cache
     cache = SCRIPTS / ".cache" / "_global" / "network_profile.json"
     cache.parent.mkdir(parents=True, exist_ok=True)
     fresh_data = {
-        "domestic_ok": True, "overseas_ok": False, "search_ok": True,
-        "has_proxy": False, "proxy_url": "",
-        "domestic_count": 3, "overseas_count": 0, "search_count": 2,
+        "domestic_ok": True,
+        "overseas_ok": False,
+        "search_ok": True,
+        "has_proxy": False,
+        "proxy_url": "",
+        "domestic_count": 3,
+        "overseas_count": 0,
+        "search_count": 2,
         "avg_latency_ms": 10,
         "probed_at": time.time(),  # fresh
-        "severity": "warning", "recommendation": "stale test",
+        "severity": "warning",
+        "recommendation": "stale test",
     }
     cache.write_text(json.dumps(fresh_data), encoding="utf-8")
 
     # Mock _probe so we can detect if run_preflight re-runs
     probe_called = {"flag": False}
+
     def fake_probe(*a, **k):
         probe_called["flag"] = True
         return np.DomainCheck(domain="x", group="", reachable=True, latency_ms=1)
@@ -138,14 +219,17 @@ def test_get_network_profile_uses_cache():
 
 def test_get_network_profile_reprobes_when_stale():
     from lib import network_preflight as np
+
     cache = SCRIPTS / ".cache" / "_global" / "network_profile.json"
     stale_data = {
-        "domestic_ok": False, "probed_at": time.time() - 99999,  # 过期
+        "domestic_ok": False,
+        "probed_at": time.time() - 99999,  # 过期
     }
     cache.parent.mkdir(parents=True, exist_ok=True)
     cache.write_text(json.dumps(stale_data), encoding="utf-8")
 
     probe_called = {"count": 0}
+
     def fake_probe(*a, **k):
         probe_called["count"] += 1
         return np.DomainCheck(domain="x", group="", reachable=True, latency_ms=1)
@@ -158,9 +242,11 @@ def test_get_network_profile_reprobes_when_stale():
 
 # ─── Layer 3 · DIM_STRATEGIES 自适应 ──────────────────────────────
 
+
 def test_dim_network_requirements_complete():
     """10 个维度都应在 DIM_NETWORK_REQUIREMENTS 里."""
     from lib.playwright_fallback import DIM_STRATEGIES, DIM_NETWORK_REQUIREMENTS
+
     for dim in DIM_STRATEGIES.keys():
         assert dim in DIM_NETWORK_REQUIREMENTS, f"{dim} 缺网络需求声明"
 
@@ -170,8 +256,12 @@ def test_filter_dims_by_network_drops_domestic_when_offline():
     from lib.network_preflight import NetworkProfile
 
     fake_profile = NetworkProfile(
-        domestic_ok=False, overseas_ok=True, search_ok=True,
-        domestic_count=0, overseas_count=3, search_count=3,
+        domestic_ok=False,
+        overseas_ok=True,
+        search_ok=True,
+        domestic_count=0,
+        overseas_count=3,
+        search_count=3,
     )
     with patch("lib.network_preflight.get_network_profile", return_value=fake_profile):
         dims = frozenset({"4_peers", "7_industry", "8_materials"})
@@ -185,8 +275,12 @@ def test_filter_dims_by_network_drops_search_when_search_offline():
     from lib.network_preflight import NetworkProfile
 
     fake_profile = NetworkProfile(
-        domestic_ok=True, overseas_ok=False, search_ok=False,
-        domestic_count=3, overseas_count=0, search_count=0,
+        domestic_ok=True,
+        overseas_ok=False,
+        search_ok=False,
+        domestic_count=3,
+        overseas_count=0,
+        search_count=0,
     )
     with patch("lib.network_preflight.get_network_profile", return_value=fake_profile):
         dims = frozenset({"4_peers", "7_industry", "18_trap"})
@@ -203,8 +297,12 @@ def test_filter_dims_keeps_all_when_network_ok():
     from lib.network_preflight import NetworkProfile
 
     fake_profile = NetworkProfile(
-        domestic_ok=True, overseas_ok=True, search_ok=True,
-        domestic_count=3, overseas_count=3, search_count=3,
+        domestic_ok=True,
+        overseas_ok=True,
+        search_ok=True,
+        domestic_count=3,
+        overseas_count=3,
+        search_count=3,
     )
     with patch("lib.network_preflight.get_network_profile", return_value=fake_profile):
         dims = frozenset({"4_peers", "7_industry", "18_trap", "14_moat"})
@@ -214,6 +312,7 @@ def test_filter_dims_keeps_all_when_network_ok():
 
 
 # ─── Layer 2 · HARD-GATE 文档检查 ────────────────────────────────
+
 
 def test_skill_md_has_playwright_autofill_gate():
     skill = Path(SCRIPTS).parent / "SKILL.md"
