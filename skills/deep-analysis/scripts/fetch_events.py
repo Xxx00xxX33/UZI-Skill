@@ -1,10 +1,12 @@
 """Dimension 15 · 事件驱动 — 用 cninfo 公告 + 新闻兜底 (避开被代理挡的 push2/datacenter)."""
+
 from __future__ import annotations
 
 import json
 import sys
 import traceback
 from datetime import datetime, timedelta
+from typing import Any
 
 import akshare as ak  # type: ignore
 from lib.market_router import parse_ticker
@@ -18,18 +20,24 @@ def _cninfo_disclosures(code: str, days_back: int = 180) -> list[dict]:
     end = today.strftime("%Y%m%d")
     try:
         df = ak.stock_zh_a_disclosure_report_cninfo(
-            symbol=code, market="沪深京", category="", start_date=start, end_date=end,
+            symbol=code,
+            market="沪深京",
+            category="",
+            start_date=start,
+            end_date=end,
         )
         if df is None or df.empty:
             return []
         rows = []
         for _, r in df.head(30).iterrows():
-            rows.append({
-                "date": str(r.get("公告时间", ""))[:10],
-                "title": str(r.get("公告标题", "")),
-                "url": str(r.get("公告链接", "")),
-                "type": "cninfo 公告",
-            })
+            rows.append(
+                {
+                    "date": str(r.get("公告时间", ""))[:10],
+                    "title": str(r.get("公告标题", "")),
+                    "url": str(r.get("公告链接", "")),
+                    "type": "cninfo 公告",
+                }
+            )
         return rows
     except Exception as e:
         return [{"error": f"cninfo fail: {e}"}]
@@ -47,12 +55,14 @@ def _try_news(code: str) -> list[dict]:
             # Filter out irrelevant board/sector/capital-flow noise
             if _is_noise_news(title):
                 continue
-            rows.append({
-                "date": str(r.get("发布时间", ""))[:16],
-                "title": title,
-                "type": "新闻",
-                "source": str(r.get("文章来源", "")),
-            })
+            rows.append(
+                {
+                    "date": str(r.get("发布时间", ""))[:16],
+                    "title": title,
+                    "type": "新闻",
+                    "source": str(r.get("文章来源", "")),
+                }
+            )
             if len(rows) >= 12:
                 break
         return rows
@@ -62,17 +72,40 @@ def _try_news(code: str) -> list[dict]:
 
 # Noise patterns: board-level / index / capital flow headlines that aren't company-specific
 _NOISE_KWS = [
-    "主力资金净流", "资金流向日报", "资金流出榜", "资金流入榜",
-    "科创板主力资金", "科创板平均股价", "创业板主力", "沪深主力",
-    "行业资金流", "板块资金", "个股主力资金净",
-    "只股中线走稳", "站上半年线", "股价超百元",
-    "融资客大手笔", "融资净买入", "融资余额",
-    "北向资金", "两融", "龙虎榜汇总",
-    "板块涨幅", "行业今日", "大盘分析",
-    "行业4月", "行业3月", "行业2月", "行业1月",
-    "股涨停", "跌停", "涨幅榜",
-    "家公司的调研", "解密主力资金出逃股",
-    "收盘价创历史新高股", "只股获",
+    "主力资金净流",
+    "资金流向日报",
+    "资金流出榜",
+    "资金流入榜",
+    "科创板主力资金",
+    "科创板平均股价",
+    "创业板主力",
+    "沪深主力",
+    "行业资金流",
+    "板块资金",
+    "个股主力资金净",
+    "只股中线走稳",
+    "站上半年线",
+    "股价超百元",
+    "融资客大手笔",
+    "融资净买入",
+    "融资余额",
+    "北向资金",
+    "两融",
+    "龙虎榜汇总",
+    "板块涨幅",
+    "行业今日",
+    "大盘分析",
+    "行业4月",
+    "行业3月",
+    "行业2月",
+    "行业1月",
+    "股涨停",
+    "跌停",
+    "涨幅榜",
+    "家公司的调研",
+    "解密主力资金出逃股",
+    "收盘价创历史新高股",
+    "只股获",
 ]
 
 
@@ -95,20 +128,197 @@ def _web_search_events(name: str, max_results: int = 6) -> list[dict]:
     # 缺口用普通 search 兜底。权威源返回质量远高于百科/贴吧/小红书。
     for q in queries:
         res_trusted = search_trusted(q, dim_key="15_events", max_results=max_results)
-        res_generic = web_search(q, max_results=max_results) if len(res_trusted) < 3 else []
+        res_generic = (
+            web_search(q, max_results=max_results) if len(res_trusted) < 3 else []
+        )
         for r in list(res_trusted) + list(res_generic):
             if "error" in r:
                 continue
             title = r.get("title", "")[:80]
             if title and title not in seen and not _is_noise_news(title):
                 seen.add(title)
-                results.append({
-                    "date": "—",
-                    "title": title,
-                    "type": "web_search",
-                    "source": r.get("url", ""),
-                })
+                results.append(
+                    {
+                        "date": "—",
+                        "title": title,
+                        "type": "web_search",
+                        "source": r.get("url", ""),
+                    }
+                )
     return results[:8]
+
+
+def _mx_text(v: Any) -> str:
+    if v is None:
+        return ""
+    if isinstance(v, str):
+        return v.strip()
+    return str(v).strip()
+
+
+def _mx_pick(node: dict[str, Any], *keys: str) -> str:
+    lowered = {str(k).lower(): v for k, v in node.items()}
+    for key in keys:
+        v = lowered.get(key.lower())
+        txt = _mx_text(v)
+        if txt and txt.lower() not in {"none", "null"}:
+            return txt
+    return ""
+
+
+def _mx_normalize_date(v: Any) -> str:
+    raw = _mx_text(v)
+    if not raw:
+        return "—"
+    if raw.isdigit():
+        try:
+            ts = int(raw)
+            if ts > 10_000_000_000:
+                ts = ts // 1000
+            return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            return raw[:16]
+    return raw.replace("T", " ")[:16]
+
+
+def _mx_news_item_from_node(node: dict[str, Any]) -> dict | None:
+    title = _mx_pick(
+        node,
+        "title",
+        "newsTitle",
+        "headline",
+        "articleTitle",
+        "name",
+        "newsName",
+    )
+    if not title or _is_noise_news(title):
+        return None
+
+    has_context = any(
+        str(k).lower()
+        in {
+            "publish_time",
+            "publishtime",
+            "pubtime",
+            "showtime",
+            "date",
+            "time",
+            "url",
+            "url_mobile",
+            "link",
+            "source",
+            "sourcename",
+            "media",
+            "medianame",
+            "summary",
+            "digest",
+            "content",
+            "abstract",
+            "brief",
+            "tag",
+            "category",
+            "typename",
+            "newsType".lower(),
+        }
+        for k in node.keys()
+    )
+    if not has_context:
+        return None
+
+    date = _mx_normalize_date(
+        _mx_pick(
+            node,
+            "publish_time",
+            "publishTime",
+            "pubTime",
+            "showTime",
+            "date",
+            "time",
+            "datetime",
+        )
+    )
+    summary = _mx_pick(
+        node, "summary", "digest", "abstract", "content", "brief", "body"
+    )[:200]
+    url = _mx_pick(node, "url", "url_mobile", "link", "newsUrl")
+    source_name = _mx_pick(
+        node, "source", "sourceName", "media", "mediaName", "siteName"
+    )
+    category = _mx_pick(node, "tag", "category", "typeName", "newsType", "type")
+
+    return {
+        "date": date,
+        "title": title[:80],
+        "type": f"mx_api:{category}" if category else "mx_api:news_search",
+        "source": source_name or url or "mx_api",
+        "summary": summary,
+        "body": summary,
+        "url": url,
+    }
+
+
+def _extract_mx_news_items(result: dict) -> list[dict]:
+    if not isinstance(result, dict) or result.get("error"):
+        return []
+
+    rows: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+
+    def walk(node: Any) -> None:
+        if len(rows) >= 12:
+            return
+        if isinstance(node, dict):
+            item = _mx_news_item_from_node(node)
+            if item:
+                key = (item.get("date", "—"), item.get("title", ""))
+                if key not in seen:
+                    seen.add(key)
+                    rows.append(item)
+                    if len(rows) >= 12:
+                        return
+            for v in node.values():
+                if isinstance(v, (dict, list)):
+                    walk(v)
+                    if len(rows) >= 12:
+                        return
+        elif isinstance(node, list):
+            for v in node:
+                if isinstance(v, (dict, list)):
+                    walk(v)
+                    if len(rows) >= 12:
+                        return
+
+    walk(result)
+    return rows
+
+
+def _event_sort_key(item: dict) -> tuple[int, str]:
+    date = str(item.get("date", "") or "").strip()
+    if not date or date == "—":
+        return (0, "")
+    return (1, date)
+
+
+def _mx_news_search(name: str, code: str, max_results: int = 8) -> list[dict]:
+    try:
+        from lib.mx_api import MXClient
+    except Exception:
+        return []
+
+    query = (name or code or "").strip()
+    if not query:
+        return []
+
+    client = MXClient()
+    if not client.available:
+        return []
+
+    try:
+        result = client.news_search(query)
+        rows = _extract_mx_news_items(result)
+        return rows[:max_results]
+    except Exception:
+        return []
 
 
 def main(ticker: str) -> dict:
@@ -118,19 +328,27 @@ def main(ticker: str) -> dict:
         try:
             from lib.hk_data_sources import fetch_hk_announcements_cached
             from lib import data_sources as _ds
+
             basic = _ds.fetch_basic(ti)
             company_name = basic.get("name") or basic.get("full_name") or ti.code
             anns = fetch_hk_announcements_cached(ti.code.zfill(5), limit=20)
             # web_search 中文公司名补充（多数港股有中文名）
             ws_events = _web_search_events(company_name) if len(anns) < 5 else []
-            timeline = [f"{a.get('date','—')} · {a.get('title','')[:80]}" for a in anns + ws_events]
+            timeline = [
+                f"{a.get('date', '—')} · {a.get('title', '')[:80]}"
+                for a in anns + ws_events
+            ]
             return {
                 "ticker": ti.full,
                 "data": {
                     "event_timeline": timeline[:30],
                     "recent_news": [
-                        {"date": a.get("date", ""), "title": a.get("title", ""),
-                         "url": a.get("url", ""), "source": a.get("source", "hkexnews")}
+                        {
+                            "date": a.get("date", ""),
+                            "title": a.get("title", ""),
+                            "url": a.get("url", ""),
+                            "source": a.get("source", "hkexnews"),
+                        }
                         for a in anns
                     ],
                     "recent_notices": [],
@@ -157,6 +375,7 @@ def main(ticker: str) -> dict:
     # Get company name for web search fallback
     try:
         from lib import data_sources as ds
+
         basic = ds.fetch_basic(ti)
         company_name = basic.get("name") or ti.code
     except Exception:
@@ -164,11 +383,21 @@ def main(ticker: str) -> dict:
 
     disclosures = _cninfo_disclosures(ti.code)
     news = _try_news(ti.code)
+    source_parts = ["cninfo:stock_zh_a_disclosure_report", "akshare:stock_news_em"]
+
+    mx_news = _mx_news_search(company_name, ti.code)
+    if mx_news:
+        news.extend(mx_news)
+        source_parts.append("mx_api:news_search")
 
     # v2.13.7 · 多源新闻聚合（金十/东财快讯/东财公告/同花顺）· 直连 HTTP · ddgs 盲区
     try:
         from lib.news_providers import get_news_multi_source
-        multi = get_news_multi_source(stock_code=ti.code, stock_name=company_name, limit_per_source=10)
+
+        multi = get_news_multi_source(
+            stock_code=ti.code, stock_name=company_name, limit_per_source=10
+        )
+        multi_used = False
         for src, items in (multi.get("sources") or {}).items():
             for it in items:
                 if not isinstance(it, dict) or it.get("error"):
@@ -176,19 +405,30 @@ def main(ticker: str) -> dict:
                 title = it.get("title", "")[:80]
                 if not title or _is_noise_news(title):
                     continue
-                news.append({
-                    "date": (it.get("publish_time") or "")[:16] or "—",
-                    "title": title,
-                    "type": f"news_providers:{src}",
-                    "source": it.get("url", ""),
-                })
+                multi_used = True
+                news.append(
+                    {
+                        "date": (it.get("publish_time") or "")[:16] or "—",
+                        "title": title,
+                        "type": f"news_providers:{src}",
+                        "source": it.get("url", ""),
+                        "body": (it.get("body") or it.get("summary") or "")[:200],
+                    }
+                )
+        if multi_used:
+            source_parts.append("news_providers(jin10/em/ths)")
     except Exception:
         pass
 
     # If filtered news is too sparse, supplement with web search
+    used_web_search = False
     if len(news) < 3:
         ws_events = _web_search_events(company_name)
-        news = news + ws_events
+        if ws_events:
+            used_web_search = True
+            news = news + ws_events
+    if used_web_search:
+        source_parts.append("web_search")
 
     # Merge + dedupe + sort by date desc
     merged = {}
@@ -198,7 +438,7 @@ def main(ticker: str) -> dict:
         k = item.get("title", "")[:80]
         if k and k not in merged:
             merged[k] = item
-    sorted_events = sorted(merged.values(), key=lambda x: x.get("date", ""), reverse=True)
+    sorted_events = sorted(merged.values(), key=_event_sort_key, reverse=True)
 
     # Build a compact timeline for the viz
     timeline = []
@@ -212,18 +452,47 @@ def main(ticker: str) -> dict:
     for item in disclosures[:20]:
         title = item.get("title", "")
         # Company-relevant catalysts: contracts, earnings, approvals, etc.
-        if any(kw in title for kw in ["合同", "中标", "业绩", "研发", "获批", "专利", "投资", "合作", "股权", "分红", "回购"]):
-            catalysts.append({
-                "date": item.get("date", ""),
-                "event": title[:80],
-                "impact": "medium",
-            })
+        if any(
+            kw in title
+            for kw in [
+                "合同",
+                "中标",
+                "业绩",
+                "研发",
+                "获批",
+                "专利",
+                "投资",
+                "合作",
+                "股权",
+                "分红",
+                "回购",
+            ]
+        ):
+            catalysts.append(
+                {
+                    "date": item.get("date", ""),
+                    "event": title[:80],
+                    "impact": "medium",
+                }
+            )
 
     # Warnings from disclosure titles
     warning_items = []
     for item in disclosures[:20]:
         title = item.get("title", "")
-        if any(kw in title for kw in ["风险", "立案", "违规", "退市", "ST", "商誉减值", "资产减值", "业绩下滑"]):
+        if any(
+            kw in title
+            for kw in [
+                "风险",
+                "立案",
+                "违规",
+                "退市",
+                "ST",
+                "商誉减值",
+                "资产减值",
+                "业绩下滑",
+            ]
+        ):
             warning_items.append(title[:80])
 
     return {
@@ -231,14 +500,17 @@ def main(ticker: str) -> dict:
         "data": {
             "event_timeline": timeline,
             "recent_news": news[:10],
+            "news": news[:10],
             "recent_notices": disclosures[:20],
+            "events": sorted_events[:20],
+            "recent_events": sorted_events[:20],
             "disclosures_count": len(disclosures),
             "news_count": len(news),
             "recent_news_label": f"{len(news)} 条新闻" if news else "—",
             "catalyst": catalysts[:5],
             "warnings": warning_items if warning_items else [],
         },
-        "source": "cninfo:stock_zh_a_disclosure_report + akshare:stock_news_em + news_providers(jin10/em/ths) + web_search",
+        "source": " + ".join(source_parts),
         "fallback": False,
     }
 
