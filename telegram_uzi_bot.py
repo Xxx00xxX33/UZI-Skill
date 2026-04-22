@@ -220,6 +220,12 @@ class UziTelegramBot:
             os.environ.get("UZI_TELEGRAM_ANALYSIS_TIMEOUT", DEFAULT_ANALYSIS_TIMEOUT)
         )
         self.analysis_depth = os.environ.get("UZI_TELEGRAM_DEPTH", DEFAULT_DEPTH)
+        self.include_bonus_fetchers = env_flag(
+            "UZI_TELEGRAM_INCLUDE_BONUS_FETCHERS", default=False
+        )
+        self.render_extra_assets = env_flag(
+            "UZI_TELEGRAM_RENDER_EXTRA_ASSETS", default=False
+        )
         configured_python = os.environ.get("UZI_TELEGRAM_PYTHON", "").strip()
         self.python_bin = self._choose_python_bin(configured_python)
         self.base_url = f"https://api.telegram.org/bot{self.token}"
@@ -468,6 +474,10 @@ class UziTelegramBot:
     def run_uzi(self, query: str) -> Path:
         env = os.environ.copy()
         env["UZI_NO_UPDATE_CHECK"] = "1"
+        if not self.include_bonus_fetchers:
+            env.setdefault("UZI_SKIP_BONUS_FETCHERS", "1")
+        if not self.render_extra_assets:
+            env.setdefault("UZI_STAGE2_SKIP_OPTIONAL_RENDERS", "1")
         command = [
             str(self.python_bin),
             str(ROOT_DIR / "run.py"),

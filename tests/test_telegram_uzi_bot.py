@@ -4,6 +4,7 @@ import json
 import errno
 import time
 from pathlib import Path
+from typing import Any
 
 import requests
 
@@ -196,6 +197,73 @@ def test_locate_report_from_output_falls_back_to_report_filename_match(tmp_path:
     stdout = f"saved report at {report}\n"
 
     assert bot.locate_report_from_output(stdout) == report
+
+
+def test_run_uzi_enables_fast_path_envs_by_default(monkeypatch, tmp_path: Path):
+    captured: dict[str, Any] = {}
+    report = tmp_path / "full-report-standalone.html"
+    report.write_text("ok", encoding="utf-8")
+
+    bot = object.__new__(UziTelegramBot)
+    bot.python_bin = Path("/usr/bin/python3")
+    bot.analysis_depth = "medium"
+    bot.analysis_timeout = 123
+    bot.include_bonus_fetchers = False
+    bot.render_extra_assets = False
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        captured["env"] = kwargs.get("env")
+        captured["timeout"] = kwargs.get("timeout")
+
+        class Result:
+            returncode = 0
+            stdout = f"报告路径: {report}\n"
+            stderr = ""
+
+        return Result()
+
+    monkeypatch.setattr("telegram_uzi_bot.subprocess.run", fake_run)
+
+    path = bot.run_uzi("600519.SH")
+
+    env: dict[str, str] = captured["env"]
+    assert path == report
+    assert captured["timeout"] == 123
+    assert env["UZI_NO_UPDATE_CHECK"] == "1"
+    assert env["UZI_SKIP_BONUS_FETCHERS"] == "1"
+    assert env["UZI_STAGE2_SKIP_OPTIONAL_RENDERS"] == "1"
+
+
+def test_run_uzi_allows_opt_in_full_extras(monkeypatch, tmp_path: Path):
+    captured: dict[str, Any] = {}
+    report = tmp_path / "full-report-standalone.html"
+    report.write_text("ok", encoding="utf-8")
+
+    bot = object.__new__(UziTelegramBot)
+    bot.python_bin = Path("/usr/bin/python3")
+    bot.analysis_depth = "medium"
+    bot.analysis_timeout = 123
+    bot.include_bonus_fetchers = True
+    bot.render_extra_assets = True
+
+    def fake_run(command, **kwargs):
+        captured["env"] = kwargs.get("env")
+
+        class Result:
+            returncode = 0
+            stdout = f"报告路径: {report}\n"
+            stderr = ""
+
+        return Result()
+
+    monkeypatch.setattr("telegram_uzi_bot.subprocess.run", fake_run)
+
+    bot.run_uzi("600519.SH")
+
+    env: dict[str, str] = captured["env"]
+    assert "UZI_SKIP_BONUS_FETCHERS" not in env
+    assert "UZI_STAGE2_SKIP_OPTIONAL_RENDERS" not in env
 
 
 def test_api_uses_poll_timeout_for_get_updates():

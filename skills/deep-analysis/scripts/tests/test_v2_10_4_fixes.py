@@ -5,6 +5,7 @@ Bugs:
 2. agent_analysis.json missing always triggers critical even in CLI-only runs
 3. ETF early-exit half-broken → `RuntimeError: Stage 2 缺少数据` after 512400 resolve
 """
+
 from __future__ import annotations
 
 import os
@@ -18,6 +19,7 @@ sys.path.insert(0, str(ROOT))
 
 
 # ─── Fix 1 & 3: self-review profile-aware ───
+
 
 def _make_dims(nums):
     return {f"{n}_fake": {"data": {"ok": True}} for n in nums}
@@ -35,15 +37,47 @@ def test_check_all_dims_lite_respects_profile():
     # Force reload profile singleton (analysis_profile caches)
     import importlib
     import lib.analysis_profile as ap
+
     importlib.reload(ap)
     import lib.self_review as sr
+
     importlib.reload(sr)
 
     p = ap.get_profile()
     enabled = {int(k.split("_")[0]) for k in p.fetchers_enabled if k[0].isdigit()}
     ctx = {"dims": _make_dims(enabled), "market": "A", "ag": {}}
     issues = sr.check_all_dims_exist(ctx)
-    assert len(issues) == 0, f"lite should not report missing dims; got {[i.issue for i in issues]}"
+    assert len(issues) == 0, (
+        f"lite should not report missing dims; got {[i.issue for i in issues]}"
+    )
+    _reset_profile_env()
+
+
+def test_lite_fast_path_skips_bonus_fetchers():
+    _reset_profile_env()
+    os.environ["UZI_LITE"] = "1"
+    import importlib
+    import run_real_test as rrt
+
+    importlib.reload(rrt)
+
+    assert rrt._should_skip_bonus_fetchers() is True
+    _reset_profile_env()
+
+
+def test_stage2_optional_render_skip_respects_env_override():
+    _reset_profile_env()
+    import importlib
+    import run_real_test as rrt
+
+    importlib.reload(rrt)
+    assert rrt._should_skip_optional_stage2_renders() is False
+
+    os.environ["UZI_STAGE2_SKIP_OPTIONAL_RENDERS"] = "1"
+    importlib.reload(rrt)
+    assert rrt._should_skip_optional_stage2_renders() is True
+
+    os.environ.pop("UZI_STAGE2_SKIP_OPTIONAL_RENDERS", None)
     _reset_profile_env()
 
 
@@ -53,8 +87,10 @@ def test_check_empty_dims_lite_respects_profile():
     os.environ["UZI_DEPTH"] = "lite"
     import importlib
     import lib.analysis_profile as ap
+
     importlib.reload(ap)
     import lib.self_review as sr
+
     importlib.reload(sr)
 
     p = ap.get_profile()
@@ -71,8 +107,10 @@ def test_check_all_dims_medium_still_reports_missing():
     _reset_profile_env()
     import importlib
     import lib.analysis_profile as ap
+
     importlib.reload(ap)
     import lib.self_review as sr
+
     importlib.reload(sr)
 
     ctx = {"dims": _make_dims([0, 1, 2]), "market": "A", "ag": {}}
@@ -82,11 +120,13 @@ def test_check_all_dims_medium_still_reports_missing():
 
 # ─── Fix 2: agent_analysis missing warning vs critical ───
 
+
 def test_agent_analysis_missing_downgrades_in_lite():
     _reset_profile_env()
     os.environ["UZI_DEPTH"] = "lite"
     import importlib
     import lib.self_review as sr
+
     importlib.reload(sr)
 
     ctx = {"dims": {}, "market": "A", "ag": None}
@@ -102,6 +142,7 @@ def test_agent_analysis_missing_critical_in_medium():
     _reset_profile_env()
     import importlib
     import lib.self_review as sr
+
     importlib.reload(sr)
 
     ctx = {"dims": {}, "market": "A", "ag": None}
@@ -115,6 +156,7 @@ def test_agent_analysis_missing_downgrades_with_cli_only_env():
     os.environ["UZI_CLI_ONLY"] = "1"
     import importlib
     import lib.self_review as sr
+
     importlib.reload(sr)
 
     ctx = {"dims": {}, "market": "A", "ag": None}
@@ -124,6 +166,7 @@ def test_agent_analysis_missing_downgrades_with_cli_only_env():
 
 
 # ─── Fix 4: ETF early-exit from main() ───
+
 
 def test_main_returns_early_on_non_stock_security(monkeypatch):
     """run_real_test.main() must NOT call stage2 when stage1 returns non_stock_security."""
@@ -150,7 +193,9 @@ def test_main_returns_early_on_non_stock_security(monkeypatch):
     monkeypatch.setattr(rrt, "stage2", fake_stage2)
 
     result = rrt.main("512400.SH")
-    assert stage2_called["flag"] is False, "stage2 should NOT be called for non_stock_security"
+    assert stage2_called["flag"] is False, (
+        "stage2 should NOT be called for non_stock_security"
+    )
     assert isinstance(result, dict)
     assert result.get("status") == "non_stock_security"
 
@@ -175,14 +220,17 @@ def test_main_returns_early_on_name_not_resolved(monkeypatch):
 
 # ─── v2.10.5 · Codex 反馈 Test 2 新发现：check_coverage_threshold 不 profile-aware ───
 
+
 def test_coverage_critical_downgrades_in_lite():
     """Fix (v2.10.5) · lite mode should not block HTML on coverage_pct<40 (no agent to fix)."""
     _reset_profile_env()
     os.environ["UZI_DEPTH"] = "lite"
     import importlib
     import lib.analysis_profile as ap
+
     importlib.reload(ap)
     import lib.self_review as sr
+
     importlib.reload(sr)
 
     ctx = {
@@ -195,7 +243,9 @@ def test_coverage_critical_downgrades_in_lite():
             },
             "dimensions": {},
         },
-        "dims": {}, "market": "A", "ag": None,
+        "dims": {},
+        "market": "A",
+        "ag": None,
     }
     issues = sr.check_coverage_threshold(ctx)
     assert len(issues) == 1
@@ -210,8 +260,10 @@ def test_coverage_critical_preserved_in_medium():
     _reset_profile_env()
     import importlib
     import lib.analysis_profile as ap
+
     importlib.reload(ap)
     import lib.self_review as sr
+
     importlib.reload(sr)
 
     ctx = {
@@ -222,7 +274,9 @@ def test_coverage_critical_preserved_in_medium():
             },
             "dimensions": {},
         },
-        "dims": {}, "market": "A", "ag": None,
+        "dims": {},
+        "market": "A",
+        "ag": None,
     }
     issues = sr.check_coverage_threshold(ctx)
     assert issues[0].severity == "critical"
@@ -237,6 +291,7 @@ def test_raw_market_initialized_from_parse_ticker():
     """
     import importlib
     import run_real_test as rrt
+
     importlib.reload(rrt)
 
     src = Path(rrt.__file__).read_text(encoding="utf-8")
@@ -259,6 +314,7 @@ def test_resume_cache_tries_resolved_ticker():
     with the parsed full code.
     """
     import run_real_test as rrt
+
     src = Path(rrt.__file__).read_text(encoding="utf-8")
     # Must contain dual-lookup logic
     assert "_full = _parse(ticker).full" in src, (
@@ -292,35 +348,55 @@ def test_coverage_profile_aware_denominator():
     os.environ["UZI_DEPTH"] = "lite"
     import importlib
     import lib.analysis_profile as ap
+
     importlib.reload(ap)
     import lib.self_review as sr
+
     importlib.reload(sr)
 
     # Realistic raw: all lite dims have their CRITICAL_CHECKS fields populated
     dims = {
-        "0_basic": {"data": {
-            "name": "贵州茅台", "price": 1500, "industry": "白酒", "market_cap": 18000,
-            "pe_ttm": 25, "pb": 8.5,
-        }},
-        "1_financials": {"data": {
-            "roe_history": [30, 28, 25],
-            "revenue_history": [1000, 900, 800],
-            "net_profit_history": [500, 400, 350],
-            "financial_health": {"ok": True},
-        }},
-        "2_kline": {"data": {
-            "stage": "牛二", "ma_align": "多头", "macd": "金叉",
-        }},
-        "10_valuation": {"data": {
-            "pe": 25, "pe_quantile": 0.6, "pb_quantile": 0.7,
-        }},
+        "0_basic": {
+            "data": {
+                "name": "贵州茅台",
+                "price": 1500,
+                "industry": "白酒",
+                "market_cap": 18000,
+                "pe_ttm": 25,
+                "pb": 8.5,
+            }
+        },
+        "1_financials": {
+            "data": {
+                "roe_history": [30, 28, 25],
+                "revenue_history": [1000, 900, 800],
+                "net_profit_history": [500, 400, 350],
+                "financial_health": {"ok": True},
+            }
+        },
+        "2_kline": {
+            "data": {
+                "stage": "牛二",
+                "ma_align": "多头",
+                "macd": "金叉",
+            }
+        },
+        "10_valuation": {
+            "data": {
+                "pe": 25,
+                "pe_quantile": 0.6,
+                "pb_quantile": 0.7,
+            }
+        },
     }
     ctx = {
         "raw": {
             "_integrity": {"coverage_pct": 80, "missing_critical": []},  # stale
             "dimensions": dims,
         },
-        "dims": dims, "market": "A", "ag": None,
+        "dims": dims,
+        "market": "A",
+        "ag": None,
     }
     issues = sr.check_coverage_threshold(ctx)
     # With all enabled-dim fields filled, recomputed pct should be high enough

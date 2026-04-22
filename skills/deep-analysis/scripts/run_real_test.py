@@ -5,6 +5,7 @@ Runs all 22 fetchers (with graceful failure), computes dimensions + panel
 
 Usage: python run_real_test.py 002273.SZ
 """
+
 from __future__ import annotations
 
 import io
@@ -14,13 +15,18 @@ import sys
 import time
 import traceback
 from pathlib import Path
+from typing import Any
 
 # Force UTF-8 output on Windows GBK consoles
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        reconfigure = getattr(sys.stdout, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="replace")
     except Exception:
-        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+        sys.stdout = io.TextIOWrapper(
+            sys.stdout.buffer, encoding="utf-8", errors="replace"
+        )
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
@@ -36,26 +42,50 @@ from concurrent.futures import ThreadPoolExecutor, as_completed  # noqa: E402
 # Fetcher registry: (module_name, dim_key, fetcher_args_fn)
 # fetcher_args_fn(ticker, raw_so_far) → args tuple for main()
 FETCHER_MAP = [
-    ("fetch_basic",           "0_basic",        lambda t, r: (t,)),
-    ("fetch_financials",      "1_financials",   lambda t, r: (t,)),
-    ("fetch_kline",           "2_kline",        lambda t, r: (t,)),
-    ("fetch_peers",           "4_peers",        lambda t, r: (t,)),
-    ("fetch_chain",           "5_chain",        lambda t, r: (t,)),
-    ("fetch_research",        "6_research",     lambda t, r: (t,)),
-    ("fetch_industry",        "7_industry",     lambda t, r: (r.get("0_basic", {}).get("data", {}).get("industry", "") or "综合",)),
-    ("fetch_materials",       "8_materials",    lambda t, r: (t,)),
-    ("fetch_futures",         "9_futures",      lambda t, r: (r.get("0_basic", {}).get("data", {}).get("industry", "") or "综合",)),
-    ("fetch_valuation",       "10_valuation",   lambda t, r: (t,)),
-    ("fetch_governance",      "11_governance",  lambda t, r: (t,)),
-    ("fetch_capital_flow",    "12_capital_flow",lambda t, r: (t,)),
-    ("fetch_policy",          "13_policy",      lambda t, r: (r.get("0_basic", {}).get("data", {}).get("industry", "") or "综合",)),
-    ("fetch_moat",            "14_moat",        lambda t, r: (t,)),
-    ("fetch_events",          "15_events",      lambda t, r: (t,)),
-    ("fetch_lhb",             "16_lhb",         lambda t, r: (t,)),
-    ("fetch_sentiment",       "17_sentiment",   lambda t, r: (t,)),
-    ("fetch_trap_signals",    "18_trap",        lambda t, r: (t,)),
-    ("fetch_contests",        "19_contests",    lambda t, r: (t,)),
-    ("fetch_macro",           "3_macro",        lambda t, r: (r.get("0_basic", {}).get("data", {}).get("industry", "") or "综合",)),
+    ("fetch_basic", "0_basic", lambda t, r: (t,)),
+    ("fetch_financials", "1_financials", lambda t, r: (t,)),
+    ("fetch_kline", "2_kline", lambda t, r: (t,)),
+    ("fetch_peers", "4_peers", lambda t, r: (t,)),
+    ("fetch_chain", "5_chain", lambda t, r: (t,)),
+    ("fetch_research", "6_research", lambda t, r: (t,)),
+    (
+        "fetch_industry",
+        "7_industry",
+        lambda t, r: (
+            r.get("0_basic", {}).get("data", {}).get("industry", "") or "综合",
+        ),
+    ),
+    ("fetch_materials", "8_materials", lambda t, r: (t,)),
+    (
+        "fetch_futures",
+        "9_futures",
+        lambda t, r: (
+            r.get("0_basic", {}).get("data", {}).get("industry", "") or "综合",
+        ),
+    ),
+    ("fetch_valuation", "10_valuation", lambda t, r: (t,)),
+    ("fetch_governance", "11_governance", lambda t, r: (t,)),
+    ("fetch_capital_flow", "12_capital_flow", lambda t, r: (t,)),
+    (
+        "fetch_policy",
+        "13_policy",
+        lambda t, r: (
+            r.get("0_basic", {}).get("data", {}).get("industry", "") or "综合",
+        ),
+    ),
+    ("fetch_moat", "14_moat", lambda t, r: (t,)),
+    ("fetch_events", "15_events", lambda t, r: (t,)),
+    ("fetch_lhb", "16_lhb", lambda t, r: (t,)),
+    ("fetch_sentiment", "17_sentiment", lambda t, r: (t,)),
+    ("fetch_trap_signals", "18_trap", lambda t, r: (t,)),
+    ("fetch_contests", "19_contests", lambda t, r: (t,)),
+    (
+        "fetch_macro",
+        "3_macro",
+        lambda t, r: (
+            r.get("0_basic", {}).get("data", {}).get("industry", "") or "综合",
+        ),
+    ),
 ]
 
 
@@ -66,6 +96,7 @@ FETCHER_MAP = [
 #   - fetch_valuation → ak.stock_a_pe_and_pb (lg)
 # 给这些 fetcher 加共享锁，强制串行化，其他 fetcher 仍并行。
 import threading as _threading
+
 _MINI_RACER_FETCHERS = {"fetch_industry", "fetch_capital_flow", "fetch_valuation"}
 _MINI_RACER_LOCK = _threading.Lock()
 
@@ -81,7 +112,31 @@ def run_fetcher(module_name: str, args: tuple) -> dict:
         return result if isinstance(result, dict) else {"data": result}
     except Exception as e:
         traceback.print_exc(file=sys.stderr)
-        return {"data": {}, "source": module_name, "fallback": True, "error": f"{type(e).__name__}: {e}"}
+        return {
+            "data": {},
+            "source": module_name,
+            "fallback": True,
+            "error": f"{type(e).__name__}: {e}",
+        }
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _should_skip_bonus_fetchers() -> bool:
+    if _env_flag("UZI_SKIP_BONUS_FETCHERS"):
+        return True
+    return os.environ.get("UZI_LITE") == "1"
+
+
+def _should_skip_optional_stage2_renders() -> bool:
+    if _env_flag("UZI_STAGE2_SKIP_OPTIONAL_RENDERS"):
+        return True
+    return os.environ.get("UZI_LITE") == "1"
 
 
 def collect_raw_data(ticker: str, max_workers: int = 6, resume: bool = True) -> dict:
@@ -104,22 +159,28 @@ def collect_raw_data(ticker: str, max_workers: int = 6, resume: bool = True) -> 
     # v2.10.6 · market 先用 parse_ticker 前置识别（HK/US 不再默认 "A"）
     # 原因：fetch_basic 有可能失败，但 parse_ticker("00700.HK") 纯字符串即可知道是 H 股
     from lib.market_router import parse_ticker as _parse, is_chinese_name as _is_cn
+
     _initial_market = "A"
     try:
         if not _is_cn(ticker):
             _initial_market = _parse(ticker).market
     except Exception:
         pass
-    raw = {"ticker": ticker, "market": _initial_market, "fetched_at": _dt.now().isoformat(timespec="seconds")}
-    dims: dict = {}
+    raw: dict[str, Any] = {
+        "ticker": ticker,
+        "market": _initial_market,
+        "fetched_at": _dt.now().isoformat(timespec="seconds"),
+    }
+    dims: dict[str, Any] = {}
     t0 = time.time()
 
     # v2.6 · resume: 加载已有 raw_data.json 中的 dim 缓存
     # v2.10.6 · resume cache 双重查询：原始 ticker 和 parse_ticker 后的 full code 都试
     # 解决：用户用中文名/三位港股输入时，cache 是按 resolved 代码存的，不查就错过
-    cached_dims: dict = {}
+    cached_dims: dict[str, Any] = {}
     if resume:
         from lib.cache import read_task_output as _read_cache
+
         # 1) 原始 ticker 直查
         prev = _read_cache(ticker, "raw_data")
         # 2) 如果没命中，用 parse_ticker 推测的 full code 再查（三位港股 "700" → "00700.HK"）
@@ -139,14 +200,17 @@ def collect_raw_data(ticker: str, max_workers: int = 6, resume: bool = True) -> 
             if _cached_market in ("A", "H", "U"):
                 raw["market"] = _cached_market
             valid_count = sum(
-                1 for d in cached_dims.values()
+                1
+                for d in cached_dims.values()
                 if isinstance(d, dict)
                 and d.get("data")
                 and not d.get("_timeout")
                 and not d.get("error")
             )
             if valid_count > 0:
-                print(f"  [resume] 检测到已有缓存 · {valid_count}/{len(cached_dims)} 维有效，跳过这些 fetcher")
+                print(
+                    f"  [resume] 检测到已有缓存 · {valid_count}/{len(cached_dims)} 维有效，跳过这些 fetcher"
+                )
                 print(f"           （用 --no-resume 强制重抓）")
 
     # 哪些 dim 总是重抓（实时数据）
@@ -189,9 +253,13 @@ def collect_raw_data(ticker: str, max_workers: int = 6, resume: bool = True) -> 
     # v2.6 · resume: 已缓存有效的 dim 直接复用，不重新调 fetcher
     # v2.10.2 · 根据 analysis_profile 决定跑哪几维（lite 只跑核心 7 维）
     wave2_start = time.time()
+    _profile = None
+    profile_depth = "unknown"
     try:
         from lib.analysis_profile import get_profile as _get_profile
+
         _profile = _get_profile()
+        profile_depth = _profile.depth
         enabled_dims = _profile.fetchers_enabled
     except Exception:
         enabled_dims = None
@@ -202,7 +270,7 @@ def collect_raw_data(ticker: str, max_workers: int = 6, resume: bool = True) -> 
         all_others = [(m, d, a) for m, d, a in all_others if d in enabled_dims]
         skipped_profile = before - len(all_others)
         if skipped_profile > 0:
-            print(f"  [profile] {_profile.depth} 模式跳过 {skipped_profile} 个维度")
+            print(f"  [profile] {profile_depth} 模式跳过 {skipped_profile} 个维度")
     # 分流
     others = []
     skipped_cached = []
@@ -213,15 +281,19 @@ def collect_raw_data(ticker: str, max_workers: int = 6, resume: bool = True) -> 
         else:
             others.append((m, d, a))
     if skipped_cached:
-        print(f"  [resume] 跳过 {len(skipped_cached)} 个已缓存维度: {', '.join(skipped_cached[:5])}{'...' if len(skipped_cached) > 5 else ''}")
-    print(f"  [wave 2] {len(others)}/{len(all_others)} fetchers parallel (max_workers={max_workers}, per-fetcher 90s)...")
+        print(
+            f"  [resume] 跳过 {len(skipped_cached)} 个已缓存维度: {', '.join(skipped_cached[:5])}{'...' if len(skipped_cached) > 5 else ''}"
+        )
+    print(
+        f"  [wave 2] {len(others)}/{len(all_others)} fetchers parallel (max_workers={max_workers}, per-fetcher 90s)..."
+    )
 
     # 长尾 fetcher 给更长 timeout（拉研报 / 拉公告 通常较慢）
     PER_FETCHER_TIMEOUT_OVERRIDES = {
-        "6_research": 180,    # akshare research_report 拉 30+ 篇
+        "6_research": 180,  # akshare research_report 拉 30+ 篇
         "1_financials": 150,  # 多张财报合并
         "10_valuation": 150,  # 历史估值分位计算
-        "15_events": 120,     # 公告 + web search
+        "15_events": 120,  # 公告 + web search
     }
     DEFAULT_PER_FETCHER_TIMEOUT = 90
 
@@ -233,10 +305,13 @@ def collect_raw_data(ticker: str, max_workers: int = 6, resume: bool = True) -> 
         return dim_key, mod_name, result, time.time() - t
 
     from concurrent.futures import TimeoutError as _FutureTimeout
+
     # v2.6 · 增量持久化：每完成 N 个 fetcher 写一次 raw_data.json，crash/Ctrl+C 后 --resume 可续
     from lib.cache import write_task_output as _write_cache
+
     INCREMENTAL_SAVE_EVERY = 3
     completed_count = 0
+
     def _persist_progress():
         raw["dimensions"] = dims
         try:
@@ -251,12 +326,18 @@ def collect_raw_data(ticker: str, max_workers: int = 6, resume: bool = True) -> 
             for fut in as_completed(futures, timeout=300):
                 item = futures[fut]
                 _, dim_key_pending, _ = item
-                fetcher_timeout = PER_FETCHER_TIMEOUT_OVERRIDES.get(dim_key_pending, DEFAULT_PER_FETCHER_TIMEOUT)
+                fetcher_timeout = PER_FETCHER_TIMEOUT_OVERRIDES.get(
+                    dim_key_pending, DEFAULT_PER_FETCHER_TIMEOUT
+                )
                 try:
-                    dim_key, mod_name, result, elapsed = fut.result(timeout=fetcher_timeout)
+                    dim_key, mod_name, result, elapsed = fut.result(
+                        timeout=fetcher_timeout
+                    )
                     dims[dim_key] = result
                     err = result.get("error") if isinstance(result, dict) else None
-                    has_data = bool(result.get("data")) if isinstance(result, dict) else False
+                    has_data = (
+                        bool(result.get("data")) if isinstance(result, dict) else False
+                    )
                     status = "✗" if err else ("✓" if has_data else "·")
                     tail = f" {err[:60]}" if err else ""
                     print(f"    {status} {dim_key:18} ({elapsed:5.1f}s){tail}")
@@ -270,17 +351,21 @@ def collect_raw_data(ticker: str, max_workers: int = 6, resume: bool = True) -> 
                         "_timeout": True,
                         "fallback": True,
                         "error": f"fetcher timeout > {fetcher_timeout}s",
-                        "source": "timeout"
+                        "source": "timeout",
                     }
-                    print(f"    ⏱  {dim_key_pending:18} (>{fetcher_timeout}s · TIMEOUT · agent 可补抓)")
+                    print(
+                        f"    ⏱  {dim_key_pending:18} (>{fetcher_timeout}s · TIMEOUT · agent 可补抓)"
+                    )
                 except Exception as e:
                     dims[dim_key_pending] = {
                         "data": {},
                         "fallback": True,
                         "error": f"{type(e).__name__}: {str(e)[:120]}",
-                        "source": "crash"
+                        "source": "crash",
                     }
-                    print(f"    ✗ {dim_key_pending:18} crash: {type(e).__name__}: {str(e)[:60]}")
+                    print(
+                        f"    ✗ {dim_key_pending:18} crash: {type(e).__name__}: {str(e)[:60]}"
+                    )
         except _FutureTimeout:
             # 整体 5 分钟超时 — 记录还没完成的 fetcher
             unfinished = [futures[f] for f in futures if not f.done()]
@@ -292,7 +377,7 @@ def collect_raw_data(ticker: str, max_workers: int = 6, resume: bool = True) -> 
                         "_timeout": True,
                         "fallback": True,
                         "error": "wave2 overall timeout > 300s",
-                        "source": "timeout"
+                        "source": "timeout",
                     }
             print(f"    ⏱  wave2 整体超时 · 未完成 {len(unfinished)} 个 fetcher 已标记")
     wave2_elapsed = time.time() - wave2_start
@@ -303,63 +388,89 @@ def collect_raw_data(ticker: str, max_workers: int = 6, resume: bool = True) -> 
     _persist_progress()
 
     # ── Wave 3: bonus fetchers (parallel) ──
-    print("  [wave 3] bonus fetchers parallel ...")
     wave3_start = time.time()
+    if _should_skip_bonus_fetchers():
+        raw["fund_managers"] = []
+        raw["similar_stocks"] = []
+        print("  [wave 3] skipped bonus fetchers for fast path (lite/env override)")
+    else:
+        print("  [wave 3] bonus fetchers parallel ...")
 
-    def _fund_holders():
-        try:
-            import fetch_fund_holders
-            # v2.10.1 · 清单 limit 保持 None（全量列出 649 家），慢在 fetch_fund_holders
-            # 内部已改成"头部 top N 算完整 5Y 业绩，其余只列名字"双层策略。
-            # UZI_FUND_STATS_TOP=N 控制几家算完整业绩（默认 20）。
-            # 用户原问题："基金拉全不是直接检索就行了吗" — 对，清单一次 API 就够，
-            # 过去慢是因为每家都跑 5Y NAV 计算，现在只头部跑，其他点 fund_url 看详情。
-            fh = fetch_fund_holders.main(ticker, limit=None)
-            return ("fund_managers", (fh.get("data") or {}).get("fund_managers", []), None)
-        except Exception as e:
-            return ("fund_managers", [], str(e))
+        def _fund_holders():
+            try:
+                import fetch_fund_holders
 
-    def _similar_stocks():
-        try:
-            import fetch_similar_stocks
-            ss = fetch_similar_stocks.main(ticker, top_n=4)
-            return ("similar_stocks", (ss.get("data") or {}).get("similar_stocks", []), None)
-        except Exception as e:
-            return ("similar_stocks", [], str(e))
+                # v2.10.1 · 清单 limit 保持 None（全量列出 649 家），慢在 fetch_fund_holders
+                # 内部已改成"头部 top N 算完整 5Y 业绩，其余只列名字"双层策略。
+                # UZI_FUND_STATS_TOP=N 控制几家算完整业绩（默认 20）。
+                # 用户原问题："基金拉全不是直接检索就行了吗" — 对，清单一次 API 就够，
+                # 过去慢是因为每家都跑 5Y NAV 计算，现在只头部跑，其他点 fund_url 看详情。
+                fh = fetch_fund_holders.main(ticker, limit=None)
+                return (
+                    "fund_managers",
+                    (fh.get("data") or {}).get("fund_managers", []),
+                    None,
+                )
+            except Exception as e:
+                return ("fund_managers", [], str(e))
 
-    # v2.6 · wave3 同样加 60s timeout per fetcher（fund_holders 默认抓全量，可能慢）
-    from concurrent.futures import TimeoutError as _FutureTimeout
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        wave3_futures = {pool.submit(_fund_holders): "fund_managers", pool.submit(_similar_stocks): "similar_stocks"}
-        try:
-            for fut in as_completed(wave3_futures, timeout=180):
-                key_pending = wave3_futures[fut]
-                try:
-                    key, val, err = fut.result(timeout=120)
-                    raw[key] = val
-                    status = "✗" if err else "✓"
-                    print(f"    {status} {key}: {len(val) if isinstance(val, list) else 'n/a'}")
-                except _FutureTimeout:
-                    raw[key_pending] = []
-                    print(f"    ⏱  {key_pending} (>120s · TIMEOUT)")
-                except Exception as e:
-                    raw[key_pending] = []
-                    print(f"    ✗ {key_pending} crash: {type(e).__name__}: {str(e)[:60]}")
-        except _FutureTimeout:
-            for f, k in wave3_futures.items():
-                if not f.done() and k not in raw:
-                    raw[k] = []
-            print(f"    ⏱  wave3 overall timeout")
+        def _similar_stocks():
+            try:
+                import fetch_similar_stocks
+
+                ss = fetch_similar_stocks.main(ticker, top_n=4)
+                return (
+                    "similar_stocks",
+                    (ss.get("data") or {}).get("similar_stocks", []),
+                    None,
+                )
+            except Exception as e:
+                return ("similar_stocks", [], str(e))
+
+        # v2.6 · wave3 同样加 60s timeout per fetcher（fund_holders 默认抓全量，可能慢）
+        from concurrent.futures import TimeoutError as _FutureTimeout
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            wave3_futures = {
+                pool.submit(_fund_holders): "fund_managers",
+                pool.submit(_similar_stocks): "similar_stocks",
+            }
+            try:
+                for fut in as_completed(wave3_futures, timeout=180):
+                    key_pending = wave3_futures[fut]
+                    try:
+                        key, val, err = fut.result(timeout=120)
+                        raw[key] = val
+                        status = "✗" if err else "✓"
+                        print(
+                            f"    {status} {key}: {len(val) if isinstance(val, list) else 'n/a'}"
+                        )
+                    except _FutureTimeout:
+                        raw[key_pending] = []
+                        print(f"    ⏱  {key_pending} (>120s · TIMEOUT)")
+                    except Exception as e:
+                        raw[key_pending] = []
+                        print(
+                            f"    ✗ {key_pending} crash: {type(e).__name__}: {str(e)[:60]}"
+                        )
+            except _FutureTimeout:
+                for f, k in wave3_futures.items():
+                    if not f.done() and k not in raw:
+                        raw[k] = []
+                print(f"    ⏱  wave3 overall timeout")
     wave3_elapsed = time.time() - wave3_start
     print(f"  [wave 3] done in {wave3_elapsed:.1f}s")
 
     raw["dimensions"] = dims
     total_elapsed = time.time() - t0
-    print(f"\n  Task 1 total: {total_elapsed:.1f}s (wave1 {time.time() - wave1_start:.1f}s + wave2 {wave2_elapsed:.1f}s + wave3 {wave3_elapsed:.1f}s)")
+    print(
+        f"\n  Task 1 total: {total_elapsed:.1f}s (wave1 {time.time() - wave1_start:.1f}s + wave2 {wave2_elapsed:.1f}s + wave3 {wave3_elapsed:.1f}s)"
+    )
 
     # v2.7.2 · stage1 收尾再 flush 一次，确保 wave3 的 fund_managers / similar_stocks 也已落盘
     try:
         from lib.cache import write_task_output as _write_cache_final
+
         _write_cache_final(ticker, "raw_data", raw)
     except Exception:
         pass
@@ -368,6 +479,7 @@ def collect_raw_data(ticker: str, max_workers: int = 6, resume: bool = True) -> 
 
 
 # ─────────── DIMENSIONS SCORING (rule-based) ───────────
+
 
 def _f(v, default=0.0):
     try:
@@ -391,26 +503,46 @@ def score_dimensions(raw: dict) -> dict:
     health = fin.get("financial_health") or {}
     debt = _f(health.get("debt_ratio"))
     rev_hist = fin.get("revenue_history") or []
-    growth = ((rev_hist[-1] - rev_hist[-2]) / rev_hist[-2] * 100) if len(rev_hist) >= 2 and rev_hist[-2] else 0
+    growth = (
+        ((rev_hist[-1] - rev_hist[-2]) / rev_hist[-2] * 100)
+        if len(rev_hist) >= 2 and rev_hist[-2]
+        else 0
+    )
     score_1 = 5
-    if last_roe >= 15: score_1 += 2
-    elif last_roe >= 10: score_1 += 1
-    elif last_roe < 5: score_1 -= 2
-    if net_margin >= 15: score_1 += 1
-    if growth >= 20: score_1 += 1
-    if debt >= 60: score_1 -= 1
+    if last_roe >= 15:
+        score_1 += 2
+    elif last_roe >= 10:
+        score_1 += 1
+    elif last_roe < 5:
+        score_1 -= 2
+    if net_margin >= 15:
+        score_1 += 1
+    if growth >= 20:
+        score_1 += 1
+    if debt >= 60:
+        score_1 -= 1
     score_1 = max(1, min(10, score_1))
     reasons_pass_1 = []
     reasons_fail_1 = []
-    if last_roe >= 15: reasons_pass_1.append(f"ROE 最新 {last_roe:.1f}%")
-    elif last_roe < 8: reasons_fail_1.append(f"ROE 最新 {last_roe:.1f}% 偏低")
-    if growth >= 20: reasons_pass_1.append(f"营收增速 {growth:.1f}%")
-    elif growth < 5: reasons_fail_1.append(f"营收增速 {growth:.1f}% 停滞")
-    if debt < 40: reasons_pass_1.append(f"资产负债率 {debt:.0f}% 健康")
-    elif debt > 60: reasons_fail_1.append(f"资产负债率 {debt:.0f}% 偏高")
-    out["1_financials"] = {"score": score_1, "weight": 5,
-                            "label": f"ROE {last_roe:.1f}% · 营收增速 {growth:+.1f}% · 负债率 {debt:.0f}%",
-                            "reasons_pass": reasons_pass_1, "reasons_fail": reasons_fail_1}
+    if last_roe >= 15:
+        reasons_pass_1.append(f"ROE 最新 {last_roe:.1f}%")
+    elif last_roe < 8:
+        reasons_fail_1.append(f"ROE 最新 {last_roe:.1f}% 偏低")
+    if growth >= 20:
+        reasons_pass_1.append(f"营收增速 {growth:.1f}%")
+    elif growth < 5:
+        reasons_fail_1.append(f"营收增速 {growth:.1f}% 停滞")
+    if debt < 40:
+        reasons_pass_1.append(f"资产负债率 {debt:.0f}% 健康")
+    elif debt > 60:
+        reasons_fail_1.append(f"资产负债率 {debt:.0f}% 偏高")
+    out["1_financials"] = {
+        "score": score_1,
+        "weight": 5,
+        "label": f"ROE {last_roe:.1f}% · 营收增速 {growth:+.1f}% · 负债率 {debt:.0f}%",
+        "reasons_pass": reasons_pass_1,
+        "reasons_fail": reasons_fail_1,
+    }
 
     # 2 · K 线
     kline = _get("2_kline")
@@ -418,22 +550,36 @@ def score_dimensions(raw: dict) -> dict:
     ma_align = str(kline.get("ma_align", ""))
     stats = kline.get("kline_stats") or {}
     score_2 = 5
-    if "Stage 2" in stage: score_2 += 2
-    elif "Stage 1" in stage: score_2 += 1
-    elif "Stage 3" in stage or "Stage 4" in stage: score_2 -= 2
-    if "多头" in ma_align: score_2 += 1
+    if "Stage 2" in stage:
+        score_2 += 2
+    elif "Stage 1" in stage:
+        score_2 += 1
+    elif "Stage 3" in stage or "Stage 4" in stage:
+        score_2 -= 2
+    if "多头" in ma_align:
+        score_2 += 1
     dd_str = stats.get("max_drawdown", "0%")
     dd = _f(dd_str)
-    if dd <= -30: score_2 -= 1
+    if dd <= -30:
+        score_2 -= 1
     score_2 = max(1, min(10, score_2))
     label_2 = f"{stage} · 均线{ma_align}"
-    if stats.get("ytd_return"): label_2 += f" · YTD {stats['ytd_return']}"
-    out["2_kline"] = {"score": score_2, "weight": 4, "label": label_2,
-                      "reasons_pass": [f"{stage}"] if "Stage 2" in stage else [],
-                      "reasons_fail": [f"最大回撤 {dd:.1f}%"] if dd <= -25 else []}
+    if stats.get("ytd_return"):
+        label_2 += f" · YTD {stats['ytd_return']}"
+    out["2_kline"] = {
+        "score": score_2,
+        "weight": 4,
+        "label": label_2,
+        "reasons_pass": [f"{stage}"] if "Stage 2" in stage else [],
+        "reasons_fail": [f"最大回撤 {dd:.1f}%"] if dd <= -25 else [],
+    }
 
     # 3 · 宏观 (qualitative — give middle)
-    out["3_macro"] = {"score": 6, "weight": 3, "label": "宏观环境中性（需 web search 补充）"}
+    out["3_macro"] = {
+        "score": 6,
+        "weight": 3,
+        "label": "宏观环境中性（需 web search 补充）",
+    }
 
     # 4 · 同行
     peers = _get("4_peers")
@@ -445,42 +591,72 @@ def score_dimensions(raw: dict) -> dict:
             self_row = next((p for p in peer_table if p.get("is_self")), None)
             if self_row:
                 self_pe = _f(self_row.get("pe"))
-                avg_pe = sum(_f(p.get("pe")) for p in peer_table if not p.get("is_self")) / max(1, len([p for p in peer_table if not p.get("is_self")]))
+                avg_pe = sum(
+                    _f(p.get("pe")) for p in peer_table if not p.get("is_self")
+                ) / max(1, len([p for p in peer_table if not p.get("is_self")]))
                 if self_pe > 0 and avg_pe > 0:
-                    if self_pe < avg_pe * 0.9: score_4 += 1
-                    elif self_pe > avg_pe * 1.2: score_4 -= 1
+                    if self_pe < avg_pe * 0.9:
+                        score_4 += 1
+                    elif self_pe > avg_pe * 1.2:
+                        score_4 -= 1
         except Exception:
             pass
-    out["4_peers"] = {"score": score_4, "weight": 4,
-                      "label": f"同业 {len(peer_table) - 1} 家对比" if peer_table else "无同行数据",
-                      "reasons_pass": [], "reasons_fail": []}
+    out["4_peers"] = {
+        "score": score_4,
+        "weight": 4,
+        "label": f"同业 {len(peer_table) - 1} 家对比" if peer_table else "无同行数据",
+        "reasons_pass": [],
+        "reasons_fail": [],
+    }
 
     # 5 · 上下游
     chain = _get("5_chain")
     breakdown = chain.get("main_business_breakdown") or []
     score_5 = 6 if breakdown else 5
-    out["5_chain"] = {"score": score_5, "weight": 4,
-                      "label": f"主营 {len(breakdown)} 类业务已识别" if breakdown else "产业链数据不完整",
-                      "reasons_pass": [], "reasons_fail": []}
+    out["5_chain"] = {
+        "score": score_5,
+        "weight": 4,
+        "label": f"主营 {len(breakdown)} 类业务已识别"
+        if breakdown
+        else "产业链数据不完整",
+        "reasons_pass": [],
+        "reasons_fail": [],
+    }
 
     # 6 · 研报
     research = _get("6_research")
     coverage = research.get("report_count", 0)
     ratings = research.get("rating_distribution") or {}
-    buy_count = sum(v for k, v in ratings.items() if "买入" in str(k) or "增持" in str(k))
+    buy_count = sum(
+        v for k, v in ratings.items() if "买入" in str(k) or "增持" in str(k)
+    )
     score_6 = 5 + min(3, coverage // 5)
-    if buy_count >= 10: score_6 += 1
+    if buy_count >= 10:
+        score_6 += 1
     score_6 = min(10, score_6)
-    out["6_research"] = {"score": score_6, "weight": 3,
-                         "label": f"{coverage} 份研报 · 买入/增持 {buy_count} 份" if coverage else "研报数据稀少",
-                         "reasons_pass": [f"覆盖券商 {coverage} 家"] if coverage >= 10 else [],
-                         "reasons_fail": [] if coverage else ["缺乏覆盖"]}
+    out["6_research"] = {
+        "score": score_6,
+        "weight": 3,
+        "label": f"{coverage} 份研报 · 买入/增持 {buy_count} 份"
+        if coverage
+        else "研报数据稀少",
+        "reasons_pass": [f"覆盖券商 {coverage} 家"] if coverage >= 10 else [],
+        "reasons_fail": [] if coverage else ["缺乏覆盖"],
+    }
 
     # 7 · 行业景气 (stub heavy qualitative)
-    out["7_industry"] = {"score": 7, "weight": 4, "label": "行业处于成长期（需 web search 确认）"}
+    out["7_industry"] = {
+        "score": 7,
+        "weight": 4,
+        "label": "行业处于成长期（需 web search 确认）",
+    }
 
     # 8 · 原材料
-    out["8_materials"] = {"score": 6, "weight": 3, "label": "原材料成本数据需 web search"}
+    out["8_materials"] = {
+        "score": 6,
+        "weight": 3,
+        "label": "原材料成本数据需 web search",
+    }
 
     # 9 · 期货关联
     out["9_futures"] = {"score": 5, "weight": 2, "label": "无强关联期货品种"}
@@ -489,28 +665,42 @@ def score_dimensions(raw: dict) -> dict:
     val = _get("10_valuation")
     pe_q_str = str(val.get("pe_quantile", ""))
     import re
-    m = re.search(r'(\d+)', pe_q_str)
+
+    m = re.search(r"(\d+)", pe_q_str)
     pe_q = int(m.group(1)) if m else 50
     score_10 = 5
-    if pe_q < 30: score_10 = 9
-    elif pe_q < 50: score_10 = 7
-    elif pe_q < 70: score_10 = 5
-    elif pe_q < 85: score_10 = 3
-    else: score_10 = 2
-    out["10_valuation"] = {"score": score_10, "weight": 5,
-                            "label": f"PE {val.get('pe', '—')} · 5 年 {pe_q} 分位 · 行业均值 {val.get('industry_pe', '—')}",
-                            "reasons_pass": ["PE 在 5 年中位数以下"] if pe_q < 50 else [],
-                            "reasons_fail": ["PE 已在 5 年高位区"] if pe_q >= 75 else []}
+    if pe_q < 30:
+        score_10 = 9
+    elif pe_q < 50:
+        score_10 = 7
+    elif pe_q < 70:
+        score_10 = 5
+    elif pe_q < 85:
+        score_10 = 3
+    else:
+        score_10 = 2
+    out["10_valuation"] = {
+        "score": score_10,
+        "weight": 5,
+        "label": f"PE {val.get('pe', '—')} · 5 年 {pe_q} 分位 · 行业均值 {val.get('industry_pe', '—')}",
+        "reasons_pass": ["PE 在 5 年中位数以下"] if pe_q < 50 else [],
+        "reasons_fail": ["PE 已在 5 年高位区"] if pe_q >= 75 else [],
+    }
 
     # 11 · 治理
     gov = _get("11_governance")
     pledge = gov.get("pledge") or []
     has_insider = bool(gov.get("insider_trades_1y"))
     score_11 = 6
-    if not pledge or (isinstance(pledge, list) and len(pledge) == 0): score_11 += 1
-    if has_insider: score_11 += 1
-    out["11_governance"] = {"score": min(10, score_11), "weight": 4,
-                             "label": f"质押记录 {len(pledge) if isinstance(pledge, list) else '—'} · 内部交易 {'有' if has_insider else '无'}"}
+    if not pledge or (isinstance(pledge, list) and len(pledge) == 0):
+        score_11 += 1
+    if has_insider:
+        score_11 += 1
+    out["11_governance"] = {
+        "score": min(10, score_11),
+        "weight": 4,
+        "label": f"质押记录 {len(pledge) if isinstance(pledge, list) else '—'} · 内部交易 {'有' if has_insider else '无'}",
+    }
 
     # 12 · 资金面 (v2.2: 主力资金替代北向，北向已关停)
     cap = _get("12_capital_flow")
@@ -526,14 +716,24 @@ def score_dimensions(raw: dict) -> dict:
     main_5d_label = f"{main_5d_net / 1e8:+.1f}亿" if main_5d_net else "—"
     unlock = cap.get("unlock_schedule") or []
     score_12 = 5
-    if main_5d_net > 0: score_12 += 2
-    elif main_5d_net < 0: score_12 -= 1
-    if len(unlock) == 0: score_12 += 1
+    if main_5d_net > 0:
+        score_12 += 2
+    elif main_5d_net < 0:
+        score_12 -= 1
+    if len(unlock) == 0:
+        score_12 += 1
     score_12 = max(1, min(10, score_12))
-    out["12_capital_flow"] = {"score": score_12, "weight": 4,
-                               "label": f"主力 5日 {main_5d_label} · 12 个月解禁 {len(unlock)} 次",
-                               "reasons_pass": [f"主力资金 5 日净流入 {main_5d_label}"] if main_5d_net > 0 else [],
-                               "reasons_fail": [f"主力资金 5 日净流出 {main_5d_label}"] if main_5d_net < 0 else []}
+    out["12_capital_flow"] = {
+        "score": score_12,
+        "weight": 4,
+        "label": f"主力 5日 {main_5d_label} · 12 个月解禁 {len(unlock)} 次",
+        "reasons_pass": [f"主力资金 5 日净流入 {main_5d_label}"]
+        if main_5d_net > 0
+        else [],
+        "reasons_fail": [f"主力资金 5 日净流出 {main_5d_label}"]
+        if main_5d_net < 0
+        else [],
+    }
 
     # 13 · 政策
     out["13_policy"] = {"score": 6, "weight": 3, "label": "政策环境中性"}
@@ -546,29 +746,43 @@ def score_dimensions(raw: dict) -> dict:
     news = events.get("news") or []
     notices = events.get("recent_notices") or []
     score_15 = 5 + min(3, len(news) // 10)
-    out["15_events"] = {"score": score_15, "weight": 4,
-                        "label": f"近期新闻 {len(news)} 条 · 公告 {len(notices)} 份"}
+    out["15_events"] = {
+        "score": score_15,
+        "weight": 4,
+        "label": f"近期新闻 {len(news)} 条 · 公告 {len(notices)} 份",
+    }
 
     # 16 · 龙虎榜
     lhb = _get("16_lhb")
     lhb_count = lhb.get("lhb_count_30d", 0)
     matched = lhb.get("matched_youzi") or []
     score_16 = 5 + min(3, lhb_count // 2)
-    if matched: score_16 += 1
+    if matched:
+        score_16 += 1
     score_16 = min(10, score_16)
-    out["16_lhb"] = {"score": score_16, "weight": 4,
-                     "label": f"近 30 天上榜 {lhb_count} 次 · 识别游资 {len(matched)} 位",
-                     "reasons_pass": [f"{'/'.join(matched[:3])} 席位出现"] if matched else []}
+    out["16_lhb"] = {
+        "score": score_16,
+        "weight": 4,
+        "label": f"近 30 天上榜 {lhb_count} 次 · 识别游资 {len(matched)} 位",
+        "reasons_pass": [f"{'/'.join(matched[:3])} 席位出现"] if matched else [],
+    }
 
     # 17 · 舆情
     hot = _get("17_sentiment")
     hot_rank = (hot.get("hot_rank") or {}).get("rank_history") or []
     score_17 = 6 + min(2, len(hot_rank) // 10)
-    out["17_sentiment"] = {"score": score_17, "weight": 3,
-                            "label": f"雪球热度上榜 {len(hot_rank)} 次"}
+    out["17_sentiment"] = {
+        "score": score_17,
+        "weight": 3,
+        "label": f"雪球热度上榜 {len(hot_rank)} 次",
+    }
 
     # 18 · 杀猪盘 (stub → safe by default, 9 分)
-    out["18_trap"] = {"score": 9, "weight": 5, "label": "🟢 未发现推广痕迹（需 web search 8 信号确认）"}
+    out["18_trap"] = {
+        "score": 9,
+        "weight": 5,
+        "label": "🟢 未发现推广痕迹（需 web search 8 信号确认）",
+    }
 
     # 19 · 实盘赛
     contests = _get("19_contests")
@@ -577,24 +791,31 @@ def score_dimensions(raw: dict) -> dict:
     hi = summary.get("high_return_cubes", 0)
     score_19 = 5 + min(3, xq_total // 5) + min(2, hi)
     score_19 = min(10, score_19)
-    out["19_contests"] = {"score": score_19, "weight": 4,
-                           "label": f"雪球 {xq_total} 个组合持有 · {hi} 个收益 >50%",
-                           "reasons_pass": [f"{xq_total} 个雪球组合持有"] if xq_total else []}
+    out["19_contests"] = {
+        "score": score_19,
+        "weight": 4,
+        "label": f"雪球 {xq_total} 个组合持有 · {hi} 个收益 >50%",
+        "reasons_pass": [f"{xq_total} 个雪球组合持有"] if xq_total else [],
+    }
 
     # Overall fundamental score
     total_weighted = sum(v["score"] * v["weight"] for v in out.values())
     total_weight = sum(v["weight"] for v in out.values())
     fundamental = (total_weighted / total_weight * 10) if total_weight else 0
 
-    return {"ticker": raw["ticker"], "fundamental_score": round(fundamental, 1), "dimensions": out}
+    return {
+        "ticker": raw["ticker"],
+        "fundamental_score": round(fundamental, 1),
+        "dimensions": out,
+    }
 
 
 # ─────────── PANEL GENERATION (rule-based) ───────────
 
 GROUP_VERDICTS = {
-    "bullish":  ["强烈买入", "买入", "关注"],
-    "bearish":  ["观望", "回避", "等待"],
-    "neutral":  ["观望", "不适合", "不达标"],
+    "bullish": ["强烈买入", "买入", "关注"],
+    "bearish": ["观望", "回避", "等待"],
+    "neutral": ["观望", "不适合", "不达标"],
 }
 
 COMMENT_TEMPLATES = {
@@ -622,7 +843,10 @@ COMMENT_TEMPLATES = {
         "neutral": ["宏观判断暂时不明。"],
     },
     "D": {
-        "bullish": ["Stage 2 + 量能配合，技术面允许进场。", "VCP 形态已成，止损位清晰。"],
+        "bullish": [
+            "Stage 2 + 量能配合，技术面允许进场。",
+            "VCP 形态已成，止损位清晰。",
+        ],
         "bearish": ["距 52 周高点太近，不是入场点。"],
         "neutral": ["等待明确突破。"],
     },
@@ -632,7 +856,11 @@ COMMENT_TEMPLATES = {
         "neutral": ["看不懂就不要碰。"],
     },
     "F": {
-        "bullish": ["板块有格局，趋势向上可以跟。", "二板定龙头，题材在线。", "情绪合力在，短线机会。"],
+        "bullish": [
+            "板块有格局，趋势向上可以跟。",
+            "二板定龙头，题材在线。",
+            "情绪合力在，短线机会。",
+        ],
         "bearish": ["市值不在我的射程里。", "题材已过热，这不是我的菜。"],
         "neutral": ["不在风格里，不适合。"],
     },
@@ -656,7 +884,15 @@ def generate_panel(dims_scored: dict, raw: dict) -> dict:
     fin_ctx = (raw.get("dimensions", {}).get("1_financials") or {}).get("data") or {}
 
     investors_out = []
-    vote_dist = {"strongly_buy": 0, "buy": 0, "watch": 0, "wait": 0, "avoid": 0, "n_a": 0, "skip": 0}
+    vote_dist = {
+        "strongly_buy": 0,
+        "buy": 0,
+        "watch": 0,
+        "wait": 0,
+        "avoid": 0,
+        "n_a": 0,
+        "skip": 0,
+    }
     sig_dist = {"bullish": 0, "neutral": 0, "bearish": 0, "skip": 0}
 
     def _score_to_verdict(score: float, signal: str) -> str:
@@ -707,36 +943,50 @@ def generate_panel(dims_scored: dict, raw: dict) -> dict:
             comment = f"{persona_line}\n{headline}"
             reasoning = verdict_obj["rationale"]
 
-        v_key = {"强烈买入": "strongly_buy", "买入": "buy", "关注": "watch",
-                 "观望": "wait", "回避": "avoid", "不适合": "skip"}.get(verdict, "n_a")
+        v_key = {
+            "强烈买入": "strongly_buy",
+            "买入": "buy",
+            "关注": "watch",
+            "观望": "wait",
+            "回避": "avoid",
+            "不适合": "skip",
+        }.get(verdict, "n_a")
         vote_dist[v_key] = vote_dist.get(v_key, 0) + 1
         sig_dist[sig] = sig_dist.get(sig, 0) + 1
 
-        investors_out.append({
-            "investor_id": inv_id,
-            "name": inv["name"],
-            "group": inv["group"],
-            "avatar": f"avatars/{inv_id}.svg",
-            "signal": sig,
-            "confidence": confidence,
-            "score": score,
-            "verdict": verdict,
-            "reasoning": reasoning,
-            "comment": comment,
-            "headline": headline,
-            "pass": [{"name": r["name"], "msg": r["msg"], "weight": r["weight"]}
-                     for r in verdict_obj["pass_rules"][:4]],
-            "fail": [{"name": r["name"], "msg": r["msg"], "weight": r["weight"]}
-                     for r in verdict_obj["fail_rules"][:4]],
-            "weight_pass": verdict_obj["weight_pass"],
-            "weight_total": verdict_obj["weight_total"],
-            "ideal_price": None,
-            "period": "中长线" if inv["group"] in ("A", "B", "E") else "短线",
-            # v2.8 · 因地制宜：每个评委用自己方法论回答这 3 个问题
-            "time_horizon": verdict_obj.get("time_horizon", "—"),
-            "position_sizing": verdict_obj.get("position_sizing", "—"),
-            "what_would_change_my_mind": verdict_obj.get("what_would_change_my_mind", "—"),
-        })
+        investors_out.append(
+            {
+                "investor_id": inv_id,
+                "name": inv["name"],
+                "group": inv["group"],
+                "avatar": f"avatars/{inv_id}.svg",
+                "signal": sig,
+                "confidence": confidence,
+                "score": score,
+                "verdict": verdict,
+                "reasoning": reasoning,
+                "comment": comment,
+                "headline": headline,
+                "pass": [
+                    {"name": r["name"], "msg": r["msg"], "weight": r["weight"]}
+                    for r in verdict_obj["pass_rules"][:4]
+                ],
+                "fail": [
+                    {"name": r["name"], "msg": r["msg"], "weight": r["weight"]}
+                    for r in verdict_obj["fail_rules"][:4]
+                ],
+                "weight_pass": verdict_obj["weight_pass"],
+                "weight_total": verdict_obj["weight_total"],
+                "ideal_price": None,
+                "period": "中长线" if inv["group"] in ("A", "B", "E") else "短线",
+                # v2.8 · 因地制宜：每个评委用自己方法论回答这 3 个问题
+                "time_horizon": verdict_obj.get("time_horizon", "—"),
+                "position_sizing": verdict_obj.get("position_sizing", "—"),
+                "what_would_change_my_mind": verdict_obj.get(
+                    "what_would_change_my_mind", "—"
+                ),
+            }
+        )
 
     # v2.11 · consensus neutral 权重校准
     # v2.9.1 半权公式（neutral 计 0.5）导致 A 股白马结构性偏低 — 51 评委里
@@ -783,7 +1033,7 @@ def _auto_summarize_dim(dim_key: str, label: str, dim: dict, score: float) -> st
     if not data:
         return f"{label}：未拉取到数据（fetcher 失败或返回空）。"
 
-    def _v(*keys, default="—"):
+    def _v(*keys: str, default: Any = "—") -> Any:
         for k in keys:
             v = data.get(k)
             if v not in (None, "", "—", "-", [], {}):
@@ -820,15 +1070,25 @@ def _auto_summarize_dim(dim_key: str, label: str, dim: dict, score: float) -> st
         return f"{label}：{stage} · 均线 {ma} · MACD {macd}。"
 
     if dim_key == "3_macro":
-        return (f"{label}：利率周期 {_v('rate_cycle')}；汇率 {_v('fx_trend')}；"
-                f"地缘 {_v('geo_risk')}；大宗商品 {_v('commodity', 'commodity_trend')}。"
-                f"得分 {score}/10。")
+        return (
+            f"{label}：利率周期 {_v('rate_cycle')}；汇率 {_v('fx_trend')}；"
+            f"地缘 {_v('geo_risk')}；大宗商品 {_v('commodity', 'commodity_trend')}。"
+            f"得分 {score}/10。"
+        )
 
     if dim_key == "4_peers":
         rank = _v("rank")
         peer_table = data.get("peer_table") or []
         ind = _v("industry")
-        peers_str = _join_list([p.get("name") for p in peer_table if isinstance(p, dict) and not p.get("is_self")][:5], max_n=5, sep="、")
+        peers_str = _join_list(
+            [
+                p.get("name")
+                for p in peer_table
+                if isinstance(p, dict) and not p.get("is_self")
+            ][:5],
+            max_n=5,
+            sep="、",
+        )
         return f"{label}：{ind} 行业，{rank}{('，主要同行：' + peers_str) if peers_str else ''}。得分 {score}/10。"
 
     if dim_key == "5_chain":
@@ -841,8 +1101,12 @@ def _auto_summarize_dim(dim_key: str, label: str, dim: dict, score: float) -> st
         return f"{label}：近期券商研报 {rep_count} 篇，一致评级 {rating}，目标价均值 {target}。"
 
     if dim_key == "7_industry":
-        ind_pe = _v("industry_pe_weighted") or (data.get("cninfo_metrics") or {}).get("industry_pe_weighted")
-        ind_count = _v("total_companies") or (data.get("cninfo_metrics") or {}).get("company_count")
+        ind_pe = _v("industry_pe_weighted") or (data.get("cninfo_metrics") or {}).get(
+            "industry_pe_weighted"
+        )
+        ind_count = _v("total_companies") or (data.get("cninfo_metrics") or {}).get(
+            "company_count"
+        )
         growth = _v("growth")
         return f"{label}：所属 {_v('industry')} · 行业 PE 加权 {ind_pe} · 上市公司数 {ind_count} · 增速 {growth}。"
 
@@ -878,7 +1142,10 @@ def _auto_summarize_dim(dim_key: str, label: str, dim: dict, score: float) -> st
         snippets = data.get("snippets") or {}
         non_empty = {k: v for k, v in snippets.items() if v}
         if non_empty:
-            preview = "；".join(f"{k}: {len(v) if isinstance(v, list) else 1} 条" for k, v in non_empty.items())
+            preview = "；".join(
+                f"{k}: {len(v) if isinstance(v, list) else 1} 条"
+                for k, v in non_empty.items()
+            )
             return f"{label}：{_v('industry', default='本行业')} {_v('year', default='')} 年政策检索：{preview}。"
         return f"{label}：{_v('industry', default='本行业')} 政策搜索未命中具体内容（建议 web_search 补抓）。"
 
@@ -904,7 +1171,11 @@ def _auto_summarize_dim(dim_key: str, label: str, dim: dict, score: float) -> st
         n = _v("recent_lhb_count", "n_lhb_30d", default=None)
         seats = data.get("recent_seats") or data.get("top_seats") or []
         if n or seats:
-            seat_str = "、".join([s.get("name", "") for s in seats[:3] if isinstance(s, dict)]) if seats else ""
+            seat_str = (
+                "、".join([s.get("name", "") for s in seats[:3] if isinstance(s, dict)])
+                if seats
+                else ""
+            )
             return f"{label}：近 30 天上榜 {n or '—'} 次{('，主要席位：' + seat_str) if seat_str else ''}。"
         return f"{label}：近期未上龙虎榜或非 A 股。"
 
@@ -933,8 +1204,10 @@ def _auto_summarize_dim(dim_key: str, label: str, dim: dict, score: float) -> st
         login_req = summary.get("xueqiu_login_required", False)
         src = summary.get("xueqiu_source", "http")
         if login_req and n_cubes == 0:
-            return (f"{label}：⚠️ XueQiu cubes 接口需登录（2026 起新政），未启用 → 0 cube。"
-                    f"启用方式：export UZI_XQ_LOGIN=1 + python -m lib.xueqiu_browser login")
+            return (
+                f"{label}：⚠️ XueQiu cubes 接口需登录（2026 起新政），未启用 → 0 cube。"
+                f"启用方式：export UZI_XQ_LOGIN=1 + python -m lib.xueqiu_browser login"
+            )
         if n_cubes:
             return f"{label}：雪球 {n_cubes} 个组合持有本股（高收益 >50% 的有 {n_high} 个）· 来源 {src}"
         return f"{label}：雪球 0 个组合持有本股（可能小盘 / 冷门 / 接口未返）"
@@ -950,19 +1223,36 @@ def _auto_summarize_dim(dim_key: str, label: str, dim: dict, score: float) -> st
 # v2.12.1 · MX/ddgs 返回垃圾数据的黑名单
 # v2.13.0 · 抽到 lib/junk_filter.py 共用（Playwright 兜底也用）· 此处保留 BC delegate
 try:
-    from lib.junk_filter import JUNK_PATTERNS as _AUTOFILL_JUNK_PATTERNS, is_junk_autofill_text as _is_junk_autofill
+    from lib.junk_filter import (
+        JUNK_PATTERNS as _AUTOFILL_JUNK_PATTERNS,
+        is_junk_autofill_text as _is_junk_autofill,
+    )
 except ImportError:
     # 兜底：旧环境直接内联定义（防止模块导入失败时整个文件崩）
     _AUTOFILL_JUNK_PATTERNS = (
-        "类型；类型", "XXX", "TODO", "null", "undefined", "None",
-        "抱歉，", "无法回答", "我不知道", "不清楚", "暂无数据",
-        "（示例）", "（待补）",
+        "类型；类型",
+        "XXX",
+        "TODO",
+        "null",
+        "undefined",
+        "None",
+        "抱歉，",
+        "无法回答",
+        "我不知道",
+        "不清楚",
+        "暂无数据",
+        "（示例）",
+        "（待补）",
     )
+
     def _is_junk_autofill(text):
-        if not text: return True
+        if not text:
+            return True
         t = str(text).strip()
-        if len(t) < 5: return True
-        if any(j in t for j in _AUTOFILL_JUNK_PATTERNS): return True
+        if len(t) < 5:
+            return True
+        if any(j in t for j in _AUTOFILL_JUNK_PATTERNS):
+            return True
         parts = [p.strip() for p in t.split("；") if p.strip()]
         return len(parts) >= 2 and len(set(parts)) == 1
 
@@ -1008,18 +1298,46 @@ def _autofill_qualitative_via_mx(raw: dict, ticker: str) -> None:
 
     # 6 个定性维度的"空判定" + MX query 模板（v2.6.1 加严：默认值也算空）
     targets = [
-        ("3_macro",     lambda d: all(_is_default_or_empty(d.get(k)) for k in ("rate_cycle","fx_trend","geo_risk","commodity")),
-                        lambda: f"{industry} 2026 宏观环境 利率周期 汇率 大宗商品 行业影响"),
-        ("7_industry",  lambda d: _is_default_or_empty(d.get("growth")) and not (d.get("cninfo_metrics") or {}).get("industry_pe_weighted"),
-                        lambda: f"{industry} 2026 行业增速 TAM 市场规模 渗透率"),
-        ("8_materials", lambda d: _is_default_or_empty(d.get("core_material")),
-                        lambda: f"{name} {code_raw} 主营业务 主要原材料 成本构成"),
-        ("9_futures",   lambda d: _is_default_or_empty(d.get("linked_contract")) or "无直接" in str(d.get("linked_contract","")),
-                        lambda: f"{industry} 行业 上下游 期货品种 套保 大宗"),
-        ("13_policy",   lambda d: not any((d.get("snippets") or {}).get(k) for k in ("policy_dir","subsidy","monitoring","anti_trust")),
-                        lambda: f"{industry} 2026 国家政策 监管动态 补贴 税收 影响"),
-        ("15_events",   lambda d: not d.get("event_timeline") and not d.get("recent_news") and not d.get("recent_notices"),
-                        lambda: f"{name} {code_raw} 最新公告 重大事件 业绩 合同"),
+        (
+            "3_macro",
+            lambda d: all(
+                _is_default_or_empty(d.get(k))
+                for k in ("rate_cycle", "fx_trend", "geo_risk", "commodity")
+            ),
+            lambda: f"{industry} 2026 宏观环境 利率周期 汇率 大宗商品 行业影响",
+        ),
+        (
+            "7_industry",
+            lambda d: _is_default_or_empty(d.get("growth"))
+            and not (d.get("cninfo_metrics") or {}).get("industry_pe_weighted"),
+            lambda: f"{industry} 2026 行业增速 TAM 市场规模 渗透率",
+        ),
+        (
+            "8_materials",
+            lambda d: _is_default_or_empty(d.get("core_material")),
+            lambda: f"{name} {code_raw} 主营业务 主要原材料 成本构成",
+        ),
+        (
+            "9_futures",
+            lambda d: _is_default_or_empty(d.get("linked_contract"))
+            or "无直接" in str(d.get("linked_contract", "")),
+            lambda: f"{industry} 行业 上下游 期货品种 套保 大宗",
+        ),
+        (
+            "13_policy",
+            lambda d: not any(
+                (d.get("snippets") or {}).get(k)
+                for k in ("policy_dir", "subsidy", "monitoring", "anti_trust")
+            ),
+            lambda: f"{industry} 2026 国家政策 监管动态 补贴 税收 影响",
+        ),
+        (
+            "15_events",
+            lambda d: not d.get("event_timeline")
+            and not d.get("recent_news")
+            and not d.get("recent_notices"),
+            lambda: f"{name} {code_raw} 最新公告 重大事件 业绩 合同",
+        ),
     ]
     fixed_count = 0
     skipped_full = 0
@@ -1040,7 +1358,7 @@ def _autofill_qualitative_via_mx(raw: dict, ticker: str) -> None:
         source_used = None
 
         # 优先 MX
-        if mx_ok:
+        if mx_ok and client is not None:
             try:
                 r = client.query(query)
                 text = _extract_mx_text(r)
@@ -1088,23 +1406,40 @@ def _autofill_qualitative_via_mx(raw: dict, ticker: str) -> None:
                 data["contract_trend"] = (text[:60] + "…") if len(text) > 60 else text
             elif dim_key == "13_policy":
                 snippets = data.setdefault("snippets", {})
-                snippets.setdefault("policy_dir", []).append({"title": text[:120], "url": "", "source": source_used})
+                snippets.setdefault("policy_dir", []).append(
+                    {"title": text[:120], "url": "", "source": source_used}
+                )
             elif dim_key == "15_events":
                 data["event_timeline"] = [text[:120]]
-            dims[dim_key] = {"ticker": ticker, "data": data,
-                             "source": (dim.get("source", "") + f"+autofill:{source_used}").lstrip("+"),
-                             "fallback": True}
+            dims[dim_key] = {
+                "ticker": ticker,
+                "data": data,
+                "source": (dim.get("source", "") + f"+autofill:{source_used}").lstrip(
+                    "+"
+                ),
+                "fallback": True,
+            }
             fixed_count += 1
-            print(f"   ✓ {dim_key:14s} via {source_used}: {text[:60]}{'…' if len(text)>60 else ''}")
+            print(
+                f"   ✓ {dim_key:14s} via {source_used}: {text[:60]}{'…' if len(text) > 60 else ''}"
+            )
         else:
-            data["_autofill_failed"] = {"query": query, "reason": "MX/ddgs 都没有返回内容"}
-            dims[dim_key] = {"ticker": ticker, "data": data,
-                             "source": (dim.get("source", "") + "+autofill_failed").lstrip("+"),
-                             "fallback": True}
+            data["_autofill_failed"] = {
+                "query": query,
+                "reason": "MX/ddgs 都没有返回内容",
+            }
+            dims[dim_key] = {
+                "ticker": ticker,
+                "data": data,
+                "source": (dim.get("source", "") + "+autofill_failed").lstrip("+"),
+                "fallback": True,
+            }
             failed_count += 1
             print(f"   ⚠️ {dim_key:14s} 兜底失败 · agent 应主动 web search 补抓")
 
-    print(f"   合计 · 充足 {skipped_full} · 兜底成功 {fixed_count} · 失败 {failed_count}（共 6 维）")
+    print(
+        f"   合计 · 充足 {skipped_full} · 兜底成功 {fixed_count} · 失败 {failed_count}（共 6 维）"
+    )
 
 
 def _extract_mx_text(result: dict) -> str:
@@ -1129,7 +1464,9 @@ def _extract_mx_text(result: dict) -> str:
     return "；".join(parts)[:300] if parts else ""
 
 
-def generate_synthesis(raw: dict, dims_scored: dict, panel: dict, agent_analysis: dict | None = None) -> dict:
+def generate_synthesis(
+    raw: dict, dims_scored: dict, panel: dict, agent_analysis: dict | None = None
+) -> dict:
     """Generate synthesis — merges agent_analysis.json if provided.
 
     agent_analysis keys (all optional, agent writes what it has):
@@ -1140,6 +1477,7 @@ def generate_synthesis(raw: dict, dims_scored: dict, panel: dict, agent_analysis
       - agent_reviewed: True  (marks that agent has intervened)
     """
     from compute_friendly import compute_scenarios, compute_exit_triggers
+
     ag = agent_analysis or {}
 
     basic = (raw.get("dimensions", {}).get("0_basic") or {}).get("data") or {}
@@ -1157,22 +1495,41 @@ def generate_synthesis(raw: dict, dims_scored: dict, panel: dict, agent_analysis
     fund_score_old = fund_score
     consensus_old = consensus
     try:
-        from lib.stock_style import detect_style, apply_style_weights, STYLE_LABELS, STYLE_EXPLANATIONS
+        from lib.stock_style import (
+            detect_style,
+            apply_style_weights,
+            STYLE_LABELS,
+            STYLE_EXPLANATIONS,
+        )
+
         # Build feature dict for style detection
         bd = basic
         try:
-            mcap_yi = float(bd.get("market_cap_raw") or 0) / 1e8 if bd.get("market_cap_raw") else 0
+            mcap_yi = (
+                float(bd.get("market_cap_raw") or 0) / 1e8
+                if bd.get("market_cap_raw")
+                else 0
+            )
         except (ValueError, TypeError):
             mcap_yi = 0
+
         # 简化的局部数字转换（避开 generate_synthesis 内 _f 作用域冲突）
         def _ff(v, dflt=0.0):
             try:
                 if v is None or v == "":
                     return dflt
-                return float(str(v).replace(",", "").replace("%", "").replace("亿", "").replace("+", "").strip())
+                return float(
+                    str(v)
+                    .replace(",", "")
+                    .replace("%", "")
+                    .replace("亿", "")
+                    .replace("+", "")
+                    .strip()
+                )
             except (ValueError, TypeError):
                 return dflt
-        d_fin = (dims_scored.get("dimensions", {}).get("1_financials") or {})
+
+        d_fin = dims_scored.get("dimensions", {}).get("1_financials") or {}
         feat_for_style = {
             "code": raw.get("ticker", ""),
             "market": raw.get("market", "A"),
@@ -1191,20 +1548,29 @@ def generate_synthesis(raw: dict, dims_scored: dict, panel: dict, agent_analysis
         fund_score = adj["fundamental_score"]
         consensus = adj["panel_consensus"]
         style_diag = adj["diagnostics"]
-        print(f"\n  🎯 v2.7 风格识别: {style_label} ({STYLE_LABELS.get(style_label,'?')}) — fund {fund_score_old:.1f}→{fund_score:.1f} · consensus {consensus_old:.1f}→{consensus:.1f}")
+        print(
+            f"\n  🎯 v2.7 风格识别: {style_label} ({STYLE_LABELS.get(style_label, '?')}) — fund {fund_score_old:.1f}→{fund_score:.1f} · consensus {consensus_old:.1f}→{consensus:.1f}"
+        )
     except Exception as _se:
-        print(f"  ⚠️ v2.7 风格加权失败（沿用原始公式）: {type(_se).__name__}: {str(_se)[:120]}")
+        print(
+            f"  ⚠️ v2.7 风格加权失败（沿用原始公式）: {type(_se).__name__}: {str(_se)[:120]}"
+        )
 
     overall = fund_score * 0.6 + consensus * 0.4
 
     # v2.11 · verdict 阈值重校准 · 从未有股能 ≥ 85 (值得重仓档空设)，
     # 论坛+微信反馈显示用户心理及格线是 65 分（@崔越 @W.D @睡袍布太少 @一印成王）
     # 调整：85/70/55/40 → 80/65/50/35，让白马/真强股进"可以蹲一蹲"档
-    if overall >= 80: verdict_label = "值得重仓"
-    elif overall >= 65: verdict_label = "可以蹲一蹲"
-    elif overall >= 50: verdict_label = "观望优先"
-    elif overall >= 35: verdict_label = "谨慎"
-    else: verdict_label = "回避"
+    if overall >= 80:
+        verdict_label = "值得重仓"
+    elif overall >= 65:
+        verdict_label = "可以蹲一蹲"
+    elif overall >= 50:
+        verdict_label = "观望优先"
+    elif overall >= 35:
+        verdict_label = "谨慎"
+    else:
+        verdict_label = "回避"
 
     # Pick bull and bear for great divide
     # CRITICAL: must pick from ACTUALLY bullish/bearish investors, never misattribute
@@ -1216,7 +1582,8 @@ def generate_synthesis(raw: dict, dims_scored: dict, panel: dict, agent_analysis
     # 新逻辑：先排除 skip 和明显异常（score=0 通常是空数据），然后按 score 排序，
     #        bull = 最高分 · bear = 最低分。signal 仅作辅助检查。
     eligible = [
-        i for i in investors
+        i
+        for i in investors
         if i.get("signal") != "skip"
         and i.get("score", 0) > 0  # 0 分通常是 fail_msg 幻觉，剔除
     ]
@@ -1236,9 +1603,14 @@ def generate_synthesis(raw: dict, dims_scored: dict, panel: dict, agent_analysis
         sig = inv.get("signal", "")
         sc = inv.get("score", 50)
         if role == "bull" and sig == "bearish":
-            print(f"   ⚠️ Top bull '{inv.get('name')}' signal=bearish but score={sc} → 数据可能错乱")
+            print(
+                f"   ⚠️ Top bull '{inv.get('name')}' signal=bearish but score={sc} → 数据可能错乱"
+            )
         if role == "bear" and sig == "bullish":
-            print(f"   ⚠️ Bottom bear '{inv.get('name')}' signal=bullish but score={sc} → 数据可能错乱")
+            print(
+                f"   ⚠️ Bottom bear '{inv.get('name')}' signal=bullish but score={sc} → 数据可能错乱"
+            )
+
     _check_signal_score(bull, "bull")
     _check_signal_score(bear, "bear")
 
@@ -1261,18 +1633,36 @@ def generate_synthesis(raw: dict, dims_scored: dict, panel: dict, agent_analysis
     rounds = [
         {
             "round": 1,
-            "bull_say": agent_bull_rounds[0] if len(agent_bull_rounds) > 0 else bull_headline,
-            "bear_say": agent_bear_rounds[0] if len(agent_bear_rounds) > 0 else bear_headline,
+            "bull_say": agent_bull_rounds[0]
+            if len(agent_bull_rounds) > 0
+            else bull_headline,
+            "bear_say": agent_bear_rounds[0]
+            if len(agent_bear_rounds) > 0
+            else bear_headline,
         },
         {
             "round": 2,
-            "bull_say": agent_bull_rounds[1] if len(agent_bull_rounds) > 1 else (" · ".join(r.get("msg", r.get("name", "")) for r in bull_pass_rules[:3]) or "数据支持我的判断。"),
-            "bear_say": agent_bear_rounds[1] if len(agent_bear_rounds) > 1 else (" · ".join(r.get("msg", r.get("name", "")) for r in bear_fail_rules[:3]) or "风险点太多。"),
+            "bull_say": agent_bull_rounds[1]
+            if len(agent_bull_rounds) > 1
+            else (
+                " · ".join(r.get("msg", r.get("name", "")) for r in bull_pass_rules[:3])
+                or "数据支持我的判断。"
+            ),
+            "bear_say": agent_bear_rounds[1]
+            if len(agent_bear_rounds) > 1
+            else (
+                " · ".join(r.get("msg", r.get("name", "")) for r in bear_fail_rules[:3])
+                or "风险点太多。"
+            ),
         },
         {
             "round": 3,
-            "bull_say": agent_bull_rounds[2] if len(agent_bull_rounds) > 2 else f"综合看，{bull.get('score', 0)} 分，我的立场不变。",
-            "bear_say": agent_bear_rounds[2] if len(agent_bear_rounds) > 2 else f"综合看，{bear.get('score', 0)} 分，风险大于收益。",
+            "bull_say": agent_bull_rounds[2]
+            if len(agent_bull_rounds) > 2
+            else f"综合看，{bull.get('score', 0)} 分，我的立场不变。",
+            "bear_say": agent_bear_rounds[2]
+            if len(agent_bear_rounds) > 2
+            else f"综合看，{bear.get('score', 0)} 分，风险大于收益。",
         },
     ]
 
@@ -1281,7 +1671,9 @@ def generate_synthesis(raw: dict, dims_scored: dict, panel: dict, agent_analysis
 
     # v2.0 · Pull institutional modeling summaries
     d20 = (raw.get("dimensions", {}).get("20_valuation_models") or {}).get("data") or {}
-    d21 = (raw.get("dimensions", {}).get("21_research_workflow") or {}).get("data") or {}
+    d21 = (raw.get("dimensions", {}).get("21_research_workflow") or {}).get(
+        "data"
+    ) or {}
     d22 = (raw.get("dimensions", {}).get("22_deep_methods") or {}).get("data") or {}
     dcf_summary = d20.get("summary") or {}
     init_cov = d21.get("initiating_coverage") or {}
@@ -1328,8 +1720,8 @@ def generate_synthesis(raw: dict, dims_scored: dict, panel: dict, agent_analysis
 
     # If still empty, generate dynamic risks from actual data instead of hardcoded ones
     if not risks:
-        pe_val = features.get("pe", 0) if "features" in dir() else 0
-        debt_val = features.get("debt_ratio", 0) if "features" in dir() else 0
+        pe_val = 0
+        debt_val = 0
         # Use features from extract_features if available
         try:
             _f = extract_features(raw, raw.get("dimensions", {}))
@@ -1359,7 +1751,10 @@ def generate_synthesis(raw: dict, dims_scored: dict, panel: dict, agent_analysis
     # Dashboard — core_conclusion: agent override > script
     ytd_return = (kline.get("kline_stats") or {}).get("ytd_return", "—")
     agent_core_conclusion = narrative_override.get("core_conclusion") or ""
-    core_conclusion = agent_core_conclusion or f"{name} · {int(overall)} 分 · {verdict_label}。51 位大佬里 {panel['signal_distribution']['bullish']} 人看多，YTD {ytd_return}。{punchline}"
+    core_conclusion = (
+        agent_core_conclusion
+        or f"{name} · {int(overall)} 分 · {verdict_label}。51 位大佬里 {panel['signal_distribution']['bullish']} 人看多，YTD {ytd_return}。{punchline}"
+    )
 
     # v2.2 · dim_commentary: prefer agent-written, fallback to AUTO-SUMMARY (v2.6.1)
     # 关键修复：原 fallback 只生成 "[脚本占位]" 字符串，导致直跑模式下报告里
@@ -1393,7 +1788,7 @@ def generate_synthesis(raw: dict, dims_scored: dict, panel: dict, agent_analysis
         if dim_key in agent_dim_commentary and agent_dim_commentary[dim_key]:
             dim_commentary_final[dim_key] = agent_dim_commentary[dim_key]
         else:
-            dim = (raw.get("dimensions", {}).get(dim_key) or {})
+            dim = raw.get("dimensions", {}).get(dim_key) or {}
             score_info = dims_scored.get("dimensions", {}).get(dim_key) or {}
             score = score_info.get("score", 0)
             auto = _auto_summarize_dim(dim_key, label, dim, score)
@@ -1418,27 +1813,57 @@ def generate_synthesis(raw: dict, dims_scored: dict, panel: dict, agent_analysis
             "initiating_rating": (init_cov.get("headline") or {}).get("rating"),
             "target_price": (init_cov.get("headline") or {}).get("target_price"),
             "upside_pct": (init_cov.get("headline") or {}).get("upside_pct"),
-            "ic_recommendation": (ic_memo.get("sections", {}).get("I_exec_summary", {}) or {}).get("headline"),
+            "ic_recommendation": (
+                ic_memo.get("sections", {}).get("I_exec_summary", {}) or {}
+            ).get("headline"),
             "bcg_position": (competitive.get("bcg_position") or {}).get("category"),
             "industry_attractiveness": competitive.get("industry_attractiveness_pct"),
         },
         # v2.7 · 风格识别 + 加权诊断（让 HTML 报告显示 + agent 可在 agent_analysis.json 覆盖 style）
         "detected_style": style_label,
-        "style_label_cn": (lambda: __import__("lib.stock_style", fromlist=["STYLE_LABELS"]).STYLE_LABELS.get(style_label, "?"))() if style_label else "?",
-        "style_explanation": (lambda: __import__("lib.stock_style", fromlist=["STYLE_EXPLANATIONS"]).STYLE_EXPLANATIONS.get(style_label, ""))() if style_label else "",
+        "style_label_cn": (
+            lambda: __import__(
+                "lib.stock_style", fromlist=["STYLE_LABELS"]
+            ).STYLE_LABELS.get(style_label, "?")
+        )()
+        if style_label
+        else "?",
+        "style_explanation": (
+            lambda: __import__(
+                "lib.stock_style", fromlist=["STYLE_EXPLANATIONS"]
+            ).STYLE_EXPLANATIONS.get(style_label, "")
+        )()
+        if style_label
+        else "",
         "style_diagnostics": style_diag,
         "agent_reviewed": bool(ag.get("agent_reviewed")),
         "panel_insights": ag.get("panel_insights") or "",
         "claude_narrative_stub": {
-            "_note": "以下字段已由 agent 覆盖" if ag.get("agent_reviewed") else "以下字段是脚本生成的占位，Task 4 中 Claude 必须根据原始数据重写",
-            "needs_rewrite": [] if ag.get("agent_reviewed") else [
-                "great_divide.punchline", "dashboard.core_conclusion",
-                "debate.rounds[*].bull_say", "debate.rounds[*].bear_say",
-                "buy_zones.*.rationale", "risks[*]"],
+            "_note": "以下字段已由 agent 覆盖"
+            if ag.get("agent_reviewed")
+            else "以下字段是脚本生成的占位，Task 4 中 Claude 必须根据原始数据重写",
+            "needs_rewrite": []
+            if ag.get("agent_reviewed")
+            else [
+                "great_divide.punchline",
+                "dashboard.core_conclusion",
+                "debate.rounds[*].bull_say",
+                "debate.rounds[*].bear_say",
+                "buy_zones.*.rationale",
+                "risks[*]",
+            ],
         },
         "debate": {
-            "bull": {"investor_id": bull["investor_id"], "name": bull["name"], "group": bull["group"]},
-            "bear": {"investor_id": bear["investor_id"], "name": bear["name"], "group": bear["group"]},
+            "bull": {
+                "investor_id": bull["investor_id"],
+                "name": bull["name"],
+                "group": bull["group"],
+            },
+            "bear": {
+                "investor_id": bear["investor_id"],
+                "name": bear["name"],
+                "group": bear["group"],
+            },
             "rounds": rounds,
             "punchline": punchline,
         },
@@ -1452,10 +1877,20 @@ def generate_synthesis(raw: dict, dims_scored: dict, panel: dict, agent_analysis
             "punchline": punchline,
         },
         "risks": risks,
-        "buy_zones": narrative_override.get("buy_zones") or {
-            "value": {"price": round(price * 0.85, 2) if price else "—", "rationale": "历史 PE 25 分位"},
-            "growth": {"price": round(price * 0.92, 2) if price else "—", "rationale": "PEG 合理区"},
-            "technical": {"price": round(price * 0.95, 2) if price else "—", "rationale": "MA60 支撑位"},
+        "buy_zones": narrative_override.get("buy_zones")
+        or {
+            "value": {
+                "price": round(price * 0.85, 2) if price else "—",
+                "rationale": "历史 PE 25 分位",
+            },
+            "growth": {
+                "price": round(price * 0.92, 2) if price else "—",
+                "rationale": "PEG 合理区",
+            },
+            "technical": {
+                "price": round(price * 0.95, 2) if price else "—",
+                "rationale": "MA60 支撑位",
+            },
             "youzi": {"price": price or "—", "rationale": "当前情绪未破"},
         },
         "friendly": {
@@ -1479,7 +1914,8 @@ def generate_synthesis(raw: dict, dims_scored: dict, panel: dict, agent_analysis
                     e.get("event", "季报")[:30]
                     for e in ((d21.get("catalyst_calendar") or {}).get("events") or [])
                     if e.get("impact") in ("high", "medium")
-                ][:3] or ["季报窗口", "行业事件"],
+                ][:3]
+                or ["季报窗口", "行业事件"],
             },
             "battle_plan": {
                 "entry": f"¥{round(price * 0.92, 2) if price else '—'}",
@@ -1508,6 +1944,7 @@ def _detect_lite_mode() -> tuple[bool, str]:
     """
     import os
     from pathlib import Path
+
     val = os.environ.get("UZI_LITE", "auto").lower()
     if val in ("1", "true", "yes", "on"):
         return True, "UZI_LITE=1 显式启用"
@@ -1534,6 +1971,7 @@ def stage1(ticker: str) -> dict:
     """
     # v2.10.1 · 性能模式自动探测（解决 codex + 首次安装机器慢的问题）
     import os
+
     # v2.10.2 · 全局 requests timeout 兜底（akshare 内部调用不会卡死）
     try:
         from lib import net_timeout_guard  # noqa: F401（import 副作用装 monkey-patch）
@@ -1545,10 +1983,14 @@ def stage1(ticker: str) -> dict:
     if not skip_preflight:
         try:
             from lib.network_preflight import run_preflight
+
             pre = run_preflight(verbose=True, timeout=3.0)
             # v2.13.5 · NetworkProfile 返 dataclass · 用 severity 判定
             # critical/degraded → 强制 lite（除非 UZI_LITE=0 显式覆盖）
-            if pre.severity in ("critical", "degraded") and os.environ.get("UZI_LITE") != "0":
+            if (
+                pre.severity in ("critical", "degraded")
+                and os.environ.get("UZI_LITE") != "0"
+            ):
                 os.environ["UZI_LITE"] = "1"
                 print(f"   ⚡ 网络受限（{pre.severity}），自动切 lite 模式防止挂太久\n")
         except Exception as _e:
@@ -1559,26 +2001,33 @@ def stage1(ticker: str) -> dict:
         os.environ["UZI_LITE"] = "1"  # 下游 fetcher 能读
         os.environ.setdefault("UZI_DDG_BUDGET", "15")  # 全局 ddgs 预算上限
         print(f"\n⚡ LITE MODE: {lite_reason}")
-        print(f"   · 跳过 fetch_macro/policy/moat 的 ddgs 查询（返回空让 agent 自己补）")
+        print(
+            f"   · 跳过 fetch_macro/policy/moat 的 ddgs 查询（返回空让 agent 自己补）"
+        )
         print(f"   · fetch_industry 跳过动态景气度查询（省 3-9 次 ddgs）")
         print(f"   · wave3 fund_holders 默认 top 20（UZI_FUND_LIMIT=all 可覆盖）")
         print(f"   · 全局 ddgs 预算 15 次/ticker（超出自动 skip）")
         print(f"   · 完整跑请 UZI_LITE=0 && python run.py <ticker>\n")
     # v2.3 · 中文名解析 — 支持纠错提示。若输入无法明确解析，早退并返回候选，不继续跑 22 fetcher。
     from lib.market_router import is_chinese_name
+
     ti = None
     if is_chinese_name(ticker):
         try:
             from lib import data_sources as _ds
+
             r = _ds.resolve_chinese_name_rich(ticker)
             if r["resolved"] is not None:
                 if r["source"] != "exact":
-                    print(f"  [resolve] {ticker} → {r['resolved'].full} (via {r['source']})")
+                    print(
+                        f"  [resolve] {ticker} → {r['resolved'].full} (via {r['source']})"
+                    )
                 ti = r["resolved"]
             elif r["candidates"]:
                 # Early-exit with structured suggestions. Write a marker so run.py / agent can react.
                 import json as _json
                 from pathlib import Path as _Path
+
                 safe_dir = _Path(".cache") / ticker
                 safe_dir.mkdir(parents=True, exist_ok=True)
                 err_payload = {
@@ -1586,15 +2035,20 @@ def stage1(ticker: str) -> dict:
                     "user_input": ticker,
                     "candidates": r["candidates"],
                     "message": f"未能确认 '{ticker}' 对应的股票。最接近的候选: "
-                               + ", ".join(f"{c['name']}({c['code']})" for c in r["candidates"][:3]),
+                    + ", ".join(
+                        f"{c['name']}({c['code']})" for c in r["candidates"][:3]
+                    ),
                 }
                 (safe_dir / "_resolve_error.json").write_text(
-                    _json.dumps(err_payload, ensure_ascii=False, indent=2), encoding="utf-8"
+                    _json.dumps(err_payload, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
                 )
                 print(f"\n🔴 无法确认股票: {ticker!r}")
                 print(f"   你是不是想输入：")
                 for c in r["candidates"][:5]:
-                    print(f"     · {c['name']} ({c['code']})   [编辑距离 {c['distance']}]")
+                    print(
+                        f"     · {c['name']} ({c['code']})   [编辑距离 {c['distance']}]"
+                    )
                 print(f"   请用 --force-name <代码> 指定，或用准确名称/代码重跑。")
                 return err_payload
             else:
@@ -1612,17 +2066,30 @@ def stage1(ticker: str) -> dict:
     if ti.market == "A":
         try:
             from lib.market_router import classify_security_type
+
             sec_type = classify_security_type(ti.code)
             NON_STOCK_GUIDANCE = {
-                "etf": ("ETF", "51 评委跑 ROE / 护城河 / 管理层 / 分红 这些个股财务指标，ETF 没这些字段",
-                        "建议：分析该 ETF 前 3-5 大持仓股（用 akshare.fund_portfolio_hold_em 查持仓），对每只成分股单独跑 /analyze-stock"),
-                "lof": ("LOF 基金", "基金没有企业基本面字段", "基金评估用专门的 fund-analyze 工具"),
-                "convertible_bond": ("可转债", "可转债看转股价/溢价率/到期收益率，不是 ROE", "分析正股或用集思录的可转债工具"),
+                "etf": (
+                    "ETF",
+                    "51 评委跑 ROE / 护城河 / 管理层 / 分红 这些个股财务指标，ETF 没这些字段",
+                    "建议：分析该 ETF 前 3-5 大持仓股（用 akshare.fund_portfolio_hold_em 查持仓），对每只成分股单独跑 /analyze-stock",
+                ),
+                "lof": (
+                    "LOF 基金",
+                    "基金没有企业基本面字段",
+                    "基金评估用专门的 fund-analyze 工具",
+                ),
+                "convertible_bond": (
+                    "可转债",
+                    "可转债看转股价/溢价率/到期收益率，不是 ROE",
+                    "分析正股或用集思录的可转债工具",
+                ),
             }
             if sec_type in NON_STOCK_GUIDANCE:
                 label, why, what_to_do = NON_STOCK_GUIDANCE[sec_type]
                 import json as _json
                 from pathlib import Path as _Path
+
                 safe_dir = _Path(".cache") / ti.full
                 safe_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1630,7 +2097,10 @@ def stage1(ticker: str) -> dict:
                 top_holdings: list[dict] = []
                 if sec_type == "etf":
                     try:
-                        import akshare as ak
+                        import importlib
+
+                        ak = importlib.import_module("akshare")
+
                         df = ak.fund_portfolio_hold_em(symbol=ti.code)
                         if df is not None and not df.empty:
                             # 找最新一期（通常按日期倒序）
@@ -1639,12 +2109,27 @@ def stage1(ticker: str) -> dict:
                                 df_latest = df[df["季度"] == latest_period]
                             else:
                                 df_latest = df
-                            for i, (_, row) in enumerate(df_latest.head(10).iterrows(), start=1):
-                                stock_code = str(row.get("股票代码", "") or row.get("code", "") or "").strip()
-                                stock_name = str(row.get("股票名称", "") or row.get("name", "") or "").strip()
-                                pct_raw = row.get("占净值比例") or row.get("比例") or row.get("weight") or ""
+                            for i, (_, row) in enumerate(
+                                df_latest.head(10).iterrows(), start=1
+                            ):
+                                stock_code = str(
+                                    row.get("股票代码", "") or row.get("code", "") or ""
+                                ).strip()
+                                stock_name = str(
+                                    row.get("股票名称", "") or row.get("name", "") or ""
+                                ).strip()
+                                pct_raw = (
+                                    row.get("占净值比例")
+                                    or row.get("比例")
+                                    or row.get("weight")
+                                    or ""
+                                )
                                 try:
-                                    pct = float(str(pct_raw).replace("%", "")) if pct_raw else 0
+                                    pct = (
+                                        float(str(pct_raw).replace("%", ""))
+                                        if pct_raw
+                                        else 0
+                                    )
                                 except (ValueError, TypeError):
                                     pct = 0
                                 if stock_code and stock_name:
@@ -1654,14 +2139,20 @@ def stage1(ticker: str) -> dict:
                                         full_code = _ti_stock.full
                                     except Exception:
                                         full_code = stock_code
-                                    top_holdings.append({
-                                        "rank": i,
-                                        "code": full_code,
-                                        "name": stock_name,
-                                        "weight_pct": round(pct, 2) if pct else None,
-                                    })
+                                    top_holdings.append(
+                                        {
+                                            "rank": i,
+                                            "code": full_code,
+                                            "name": stock_name,
+                                            "weight_pct": round(pct, 2)
+                                            if pct
+                                            else None,
+                                        }
+                                    )
                     except Exception as _e:
-                        print(f"  ⚠️ 拉 ETF 持仓失败: {type(_e).__name__}: {str(_e)[:80]}")
+                        print(
+                            f"  ⚠️ 拉 ETF 持仓失败: {type(_e).__name__}: {str(_e)[:80]}"
+                        )
 
                 err_payload = {
                     "status": "non_stock_security",
@@ -1678,26 +2169,38 @@ def stage1(ticker: str) -> dict:
                     ),
                     "user_prompt": (
                         "请选择要分析的成分股（输入编号或代码），例如：`/analyze-stock 1` 或 `/analyze-stock 601899`"
-                        if top_holdings else ""
+                        if top_holdings
+                        else ""
                     ),
                 }
                 (safe_dir / "_resolve_error.json").write_text(
-                    _json.dumps(err_payload, ensure_ascii=False, indent=2), encoding="utf-8"
+                    _json.dumps(err_payload, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
                 )
                 print(f"\n🔴 非个股标的: {ti.full} ({label})")
                 print(f"   本插件是**个股**深度分析引擎，{why}")
                 if sec_type == "etf" and top_holdings:
-                    print(f"\n   📊 不过我可以帮你识别 {ti.full} 的前 {len(top_holdings)} 大持仓，请选一只分析：\n")
+                    print(
+                        f"\n   📊 不过我可以帮你识别 {ti.full} 的前 {len(top_holdings)} 大持仓，请选一只分析：\n"
+                    )
                     for h in top_holdings:
-                        pct_str = f"{h['weight_pct']:.2f}%" if h.get("weight_pct") else "—"
-                        print(f"     {h['rank']:2d}. {h['name']:12} ({h['code']:12}) · 占比 {pct_str}")
+                        pct_str = (
+                            f"{h['weight_pct']:.2f}%" if h.get("weight_pct") else "—"
+                        )
+                        print(
+                            f"     {h['rank']:2d}. {h['name']:12} ({h['code']:12}) · 占比 {pct_str}"
+                        )
                     print(f"\n   👉 请选择要分析的成分股（告诉我编号或代码）")
-                    print(f"      例：/analyze-stock {top_holdings[0]['code']}  或  /analyze-stock {top_holdings[0]['name']}")
+                    print(
+                        f"      例：/analyze-stock {top_holdings[0]['code']}  或  /analyze-stock {top_holdings[0]['name']}"
+                    )
                 else:
                     print(f"   {what_to_do}")
                 return err_payload
         except Exception as e:
-            print(f"  ⚠️ 非个股检测出错，继续走正常流程: {type(e).__name__}: {str(e)[:80]}")
+            print(
+                f"  ⚠️ 非个股检测出错，继续走正常流程: {type(e).__name__}: {str(e)[:80]}"
+            )
 
     print("📊 Task 1 · 数据采集")
     raw = collect_raw_data(ti.full)
@@ -1709,6 +2212,7 @@ def stage1(ticker: str) -> dict:
         format_report as _fmt_integrity,
         generate_recovery_tasks as _gen_tasks,
     )
+
     _integrity = _validate_raw(raw)
     print("\n" + _fmt_integrity(_integrity))
     raw["_integrity"] = _integrity
@@ -1718,15 +2222,20 @@ def stage1(ticker: str) -> dict:
     if _tasks:
         import json as _json
         from pathlib import Path as _Path
+
         gaps_path = _Path(".cache") / ti.full / "_data_gaps.json"
         gaps_path.parent.mkdir(parents=True, exist_ok=True)
         gaps_path.write_text(
-            _json.dumps({
-                "ticker": ti.full,
-                "coverage_pct": _integrity.get("coverage_pct", 0),
-                "critical_missing": _integrity.get("critical_missing", False),
-                "tasks": _tasks,
-            }, ensure_ascii=False, indent=2),
+            _json.dumps(
+                {
+                    "ticker": ti.full,
+                    "coverage_pct": _integrity.get("coverage_pct", 0),
+                    "critical_missing": _integrity.get("critical_missing", False),
+                    "tasks": _tasks,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
             encoding="utf-8",
         )
         crit_n = sum(1 for t in _tasks if t["severity"] == "critical")
@@ -1738,7 +2247,9 @@ def stage1(ticker: str) -> dict:
         print(f"     2. MX API (若 MX_APIKEY 已设置)")
         print(f"     3. WebSearch 精确到代码")
         print(f"     4. 已有数据逻辑推导")
-        print(f"   仍拿不到的字段 → 在 agent_analysis.json 显式标 data_gap_acknowledged")
+        print(
+            f"   仍拿不到的字段 → 在 agent_analysis.json 显式标 data_gap_acknowledged"
+        )
         print(f"   HTML 报告会对这些字段显示 ⚠️ 橙色徽章而非假数据")
         print(f"{'▓' * 50}")
 
@@ -1755,32 +2266,47 @@ def stage1(ticker: str) -> dict:
     # v2.13.0 · Playwright 最后一层兜底（按 profile 决策 · lite 自动跳过 · deep 默认启用 + y/n 装）
     # lite: 完全禁用 · medium: opt-in (UZI_PLAYWRIGHT_ENABLE=1) · deep: 默认启用（未装 y/n 确认装）
     try:
-        from lib.playwright_fallback import autofill_via_playwright, is_playwright_enabled
+        from lib.playwright_fallback import (
+            autofill_via_playwright,
+            is_playwright_enabled,
+        )
+
         if is_playwright_enabled():
             print("\n🎭 v2.13.0 · Playwright 兜底（按 profile 策略）...")
             _pw_summary = autofill_via_playwright(raw, ti.full)
             if _pw_summary.get("succeeded", 0) > 0:
                 write_task_output(ti.full, "raw_data", raw)
     except Exception as _pwe:
-        print(f"   ⚠️ Playwright 兜底异常（跳过，不阻塞主流程）: {type(_pwe).__name__}: {str(_pwe)[:120]}")
+        print(
+            f"   ⚠️ Playwright 兜底异常（跳过，不阻塞主流程）: {type(_pwe).__name__}: {str(_pwe)[:120]}"
+        )
 
     print("\n🏛  Task 1.5 · 机构级财务建模 (Dims 20-22)")
     from compute_deep_methods import compute_dim_20, compute_dim_21, compute_dim_22
+
     _features_pre = extract_features(raw, raw.get("dimensions", {}))
     raw["dimensions"]["20_valuation_models"] = compute_dim_20(_features_pre, raw)
     _d20 = raw["dimensions"]["20_valuation_models"]["data"]
     raw["dimensions"]["21_research_workflow"] = compute_dim_21(_features_pre, raw, _d20)
     _d21 = raw["dimensions"]["21_research_workflow"]["data"]
-    raw["dimensions"]["22_deep_methods"] = compute_dim_22(_features_pre, raw, _d20, _d21)
+    raw["dimensions"]["22_deep_methods"] = compute_dim_22(
+        _features_pre, raw, _d20, _d21
+    )
     write_task_output(ti.full, "raw_data", raw)
     _s20 = _d20["summary"]
     _s21 = _d21["summary"]
     _s22 = raw["dimensions"]["22_deep_methods"]["data"]["summary"]
-    print(f"  DCF: ¥{_s20.get('dcf_intrinsic')} · 安全边际 {_s20.get('dcf_safety_margin_pct')}% · {_s20.get('dcf_verdict')}")
+    print(
+        f"  DCF: ¥{_s20.get('dcf_intrinsic')} · 安全边际 {_s20.get('dcf_safety_margin_pct')}% · {_s20.get('dcf_verdict')}"
+    )
     print(f"  LBO: IRR {_s20.get('lbo_irr_pct')}% · {_s20.get('lbo_verdict')}")
-    print(f"  首次覆盖: {_s21.get('rec_rating')} · TP ¥{_s21.get('target_price')} ({_s21.get('upside_pct'):+}%)")
+    print(
+        f"  首次覆盖: {_s21.get('rec_rating')} · TP ¥{_s21.get('target_price')} ({_s21.get('upside_pct'):+}%)"
+    )
     print(f"  IC Memo: {_s22.get('ic_recommendation')}")
-    print(f"  BCG: {_s22.get('bcg_position')} · 行业吸引力 {_s22.get('industry_attractiveness')}%")
+    print(
+        f"  BCG: {_s22.get('bcg_position')} · 行业吸引力 {_s22.get('industry_attractiveness')}%"
+    )
 
     print("\n📏 Task 2 · 22 维打分")
     dims = score_dimensions(raw)
@@ -1793,7 +2319,9 @@ def stage1(ticker: str) -> dict:
     sd = panel["signal_distribution"]
     skip_n = sd.get("skip", 0)
     active_n = len(panel["investors"]) - skip_n
-    print(f"  参与 {active_n} · 跳过 {skip_n} · 看多 {sd['bullish']} · 中性 {sd['neutral']} · 看空 {sd['bearish']}")
+    print(
+        f"  参与 {active_n} · 跳过 {skip_n} · 看多 {sd['bullish']} · 中性 {sd['neutral']} · 看空 {sd['bearish']}"
+    )
 
     features = extract_features(raw, raw.get("dimensions", {}))
 
@@ -1808,7 +2336,9 @@ def stage1(ticker: str) -> dict:
     print(f"      2. Spawn 4 个 sub-agent 分组 role-play 投资者")
     print(f"      3. 用 agent 判断覆盖 panel.json 中的 headline/reasoning/score")
     print(f"      4. 写 agent_analysis.json 到 .cache/{ti.full}/")
-    print(f"         包含: dim_commentary, panel_insights, great_divide_override, narrative_override")
+    print(
+        f"         包含: dim_commentary, panel_insights, great_divide_override, narrative_override"
+    )
     print(f"         设置 agent_reviewed: true")
     print(f"      5. 然后调用 stage2('{ti.full}') 生成最终报告")
     print(f"{'━' * 50}")
@@ -1831,6 +2361,7 @@ def stage2(ticker: str) -> str:
     返回报告路径。
     """
     from lib.cache import read_task_output
+
     ti = parse_ticker(ticker)
 
     raw = read_task_output(ti.full, "raw_data")
@@ -1846,21 +2377,35 @@ def stage2(ticker: str) -> str:
     # v2.6 · 校验 agent_analysis schema（特别针对非 Claude 模型的输出）
     if agent_analysis:
         try:
-            from lib.agent_analysis_validator import validate as _validate_aa, format_issues as _fmt_aa
+            from lib.agent_analysis_validator import (
+                validate as _validate_aa,
+                format_issues as _fmt_aa,
+            )
+
             issues = _validate_aa(agent_analysis)
             errs = [i for i in issues if i.severity == "error"]
             if issues:
                 print("\n" + _fmt_aa(issues))
                 # 写错误清单 JSON 给 agent 复盘
                 from pathlib import Path as _Path
+
                 err_path = _Path(".cache") / ti.full / "_agent_analysis_errors.json"
                 err_path.parent.mkdir(parents=True, exist_ok=True)
                 err_path.write_text(
                     __import__("json").dumps(
-                        [{"severity": i.severity, "field": i.field, "message": i.message, "suggestion": i.suggestion} for i in issues],
-                        ensure_ascii=False, indent=2
+                        [
+                            {
+                                "severity": i.severity,
+                                "field": i.field,
+                                "message": i.message,
+                                "suggestion": i.suggestion,
+                            }
+                            for i in issues
+                        ],
+                        ensure_ascii=False,
+                        indent=2,
                     ),
-                    encoding="utf-8"
+                    encoding="utf-8",
                 )
                 if errs:
                     print(f"   → 详细 issue 写入 {err_path}")
@@ -1873,27 +2418,54 @@ def stage2(ticker: str) -> str:
         ag_dc = agent_analysis.get("dim_commentary") or {}
         ag_written = sum(1 for v in ag_dc.values() if v and "[脚本占位]" not in str(v))
         print(f"   dim_commentary: {ag_written} 个维度有 agent 定性评语")
-        print(f"   panel_insights: {'✓' if agent_analysis.get('panel_insights') else '✗'}")
-        print(f"   narrative_override: {'✓' if agent_analysis.get('narrative_override') else '✗'}")
-        print(f"   great_divide_override: {'✓' if agent_analysis.get('great_divide_override') else '✗'}")
+        print(
+            f"   panel_insights: {'✓' if agent_analysis.get('panel_insights') else '✗'}"
+        )
+        print(
+            f"   narrative_override: {'✓' if agent_analysis.get('narrative_override') else '✗'}"
+        )
+        print(
+            f"   great_divide_override: {'✓' if agent_analysis.get('great_divide_override') else '✗'}"
+        )
 
         # v2.4 · HARD-GATE-QUALITATIVE 校验（仅警示，不 abort）
         qd = agent_analysis.get("qualitative_deep_dive") or {}
-        required_dims = ("3_macro", "7_industry", "8_materials", "9_futures", "13_policy", "15_events")
-        missing_qd = [d for d in required_dims if d not in qd or not qd[d].get("evidence")]
-        total_evidence = sum(len((qd.get(d) or {}).get("evidence") or []) for d in required_dims)
-        total_assoc = sum(len((qd.get(d) or {}).get("associations") or []) for d in required_dims)
+        required_dims = (
+            "3_macro",
+            "7_industry",
+            "8_materials",
+            "9_futures",
+            "13_policy",
+            "15_events",
+        )
+        missing_qd = [
+            d for d in required_dims if d not in qd or not qd[d].get("evidence")
+        ]
+        total_evidence = sum(
+            len((qd.get(d) or {}).get("evidence") or []) for d in required_dims
+        )
+        total_assoc = sum(
+            len((qd.get(d) or {}).get("associations") or []) for d in required_dims
+        )
         if missing_qd:
-            print(f"   ⚠️  qualitative_deep_dive: 缺失 {len(missing_qd)}/6 维 ({','.join(missing_qd)})")
+            print(
+                f"   ⚠️  qualitative_deep_dive: 缺失 {len(missing_qd)}/6 维 ({','.join(missing_qd)})"
+            )
             print(f"      → 参考 references/task2.5-qualitative-deep-dive.md")
-            print(f"      → 应 spawn 3 个并行 sub-agent (Macro-Policy / Industry-Events / Cost-Transmission)")
+            print(
+                f"      → 应 spawn 3 个并行 sub-agent (Macro-Policy / Industry-Events / Cost-Transmission)"
+            )
         else:
-            print(f"   qualitative_deep_dive: ✓ 6 维全覆盖 · evidence {total_evidence} 条 · associations {total_assoc} 条")
+            print(
+                f"   qualitative_deep_dive: ✓ 6 维全覆盖 · evidence {total_evidence} 条 · associations {total_assoc} 条"
+            )
             if total_assoc < 3:
                 print(f"   ⚠️  跨域因果链仅 {total_assoc} 条，task2.5 要求 ≥ 3 条")
     else:
         print(f"\n⚠️  未检测到 agent_analysis.json · 将使用脚本骨架生成 synthesis")
-        print(f"   提示: Claude agent 应在 stage1 之后写入 .cache/{ti.full}/agent_analysis.json")
+        print(
+            f"   提示: Claude agent 应在 stage1 之后写入 .cache/{ti.full}/agent_analysis.json"
+        )
         print(f"   然后再调用 stage2() · 这样报告质量会显著提升")
         agent_analysis = None
 
@@ -1905,13 +2477,18 @@ def stage2(ticker: str) -> str:
     # 其他未处理的 gap 原样传递给 HTML。
     from pathlib import Path as _Path
     import json as _json
+
     gaps_path = _Path(".cache") / ti.full / "_data_gaps.json"
     if gaps_path.exists():
         try:
             gaps_doc = _json.loads(gaps_path.read_text(encoding="utf-8"))
             tasks = gaps_doc.get("tasks", [])
             # Merge agent's ack if present
-            acks = (agent_analysis or {}).get("data_gap_acknowledged", {}) if agent_analysis else {}
+            acks = (
+                (agent_analysis or {}).get("data_gap_acknowledged", {})
+                if agent_analysis
+                else {}
+            )
             for t in tasks:
                 key = f"{t['dim']}.{t['field']}"
                 if key in acks or t["dim"] in acks:
@@ -1923,7 +2500,9 @@ def stage2(ticker: str) -> str:
                 "unresolved": sum(1 for t in tasks if t["status"] == "pending"),
                 "tasks": tasks,
             }
-            print(f"  data_gaps: {syn['data_gaps']['total_gaps']} 项 · 已 ack {syn['data_gaps']['total_gaps'] - syn['data_gaps']['unresolved']}")
+            print(
+                f"  data_gaps: {syn['data_gaps']['total_gaps']} 项 · 已 ack {syn['data_gaps']['total_gaps'] - syn['data_gaps']['unresolved']}"
+            )
         except Exception as _e:
             print(f"  ⚠️ 读取 _data_gaps.json 失败: {_e}")
 
@@ -1933,28 +2512,36 @@ def stage2(ticker: str) -> str:
 
     print(f"\n📄 Task 5 · 报告组装")
     from assemble_report import assemble
+
     out = assemble(ti.full)
     print(f"  → {out}")
 
     from inline_assets import main as inline_main
+
     standalone = inline_main(ti.full)
 
-    try:
-        from render_share_card import main as render_sc
-        render_sc(ti.full)
-        print(f"  ✓ 朋友圈分享卡 PNG")
-    except Exception as e:
-        print(f"  ⚠️ 分享卡跳过: {e}")
-    try:
-        from render_war_report import main as render_wr
-        render_wr(ti.full)
-        print(f"  ✓ 战报横图 PNG")
-    except Exception as e:
-        print(f"  ⚠️ 战报跳过: {e}")
+    if _should_skip_optional_stage2_renders():
+        print("  ⚡ 快速路径：跳过 share-card / war-report PNG 渲染")
+    else:
+        try:
+            from render_share_card import main as render_sc
+
+            render_sc(ti.full)
+            print(f"  ✓ 朋友圈分享卡 PNG")
+        except Exception as e:
+            print(f"  ⚠️ 分享卡跳过: {e}")
+        try:
+            from render_war_report import main as render_wr
+
+            render_wr(ti.full)
+            print(f"  ✓ 战报横图 PNG")
+        except Exception as e:
+            print(f"  ⚠️ 战报跳过: {e}")
 
     standalone_path = Path(standalone).resolve()
-    assert standalone_path.exists() and standalone_path.stat().st_size > 10000, \
+    assert standalone_path.exists() and standalone_path.stat().st_size > 10000, (
         f"Standalone file missing or too small: {standalone_path}"
+    )
 
     print(f"\n✅ Stage 2 完成!")
     print(f"   报告: {standalone_path}")
@@ -1963,6 +2550,7 @@ def stage2(ticker: str) -> str:
     if os.environ.get("UZI_NO_AUTO_OPEN") != "1":
         try:
             import webbrowser
+
             webbrowser.open(standalone_path.as_uri())
             print(f"   🌐 已在浏览器中打开")
         except Exception:
