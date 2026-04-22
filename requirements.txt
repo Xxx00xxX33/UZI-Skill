@@ -6,6 +6,7 @@
 akshare>=1.14.0
 yfinance>=0.2.40
 baostock>=0.8.9    # K 线 fallback (官方接口，无需 key)
+tushare>=1.4.24    # A 股官方级备源（财报 / K线 / 龙虎榜），支持复用 ai-trader 的 TUSHARE_TOKEN
 
 # 数据处理
 pandas>=2.0.0
