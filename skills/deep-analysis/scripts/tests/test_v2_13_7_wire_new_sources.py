@@ -4,6 +4,7 @@ v2.13.4 / v2.13.6 只把新源加到 registry，实际 fetcher 还没用 ·
 v2.13.7 在 fetch_events/sentiment/policy + data_sources._kline_*_chain
 里加载 news_providers / yahoo_v8_chart / cfachina_titles 调用。
 """
+
 from __future__ import annotations
 
 import sys
@@ -16,8 +17,10 @@ sys.path.insert(0, str(SCRIPTS))
 
 # ─── news_providers 模块存在性 ───────────────────────────────────
 
+
 def test_news_providers_module_exports():
     from lib import news_providers as np
+
     assert callable(np.fetch_jin10)
     assert callable(np.fetch_em_kuaixun)
     assert callable(np.fetch_em_stock_ann)
@@ -27,6 +30,7 @@ def test_news_providers_module_exports():
 
 def test_news_providers_news_item_dataclass():
     from lib.news_providers import NewsItem
+
     item = NewsItem(source="jin10", title="x")
     assert item.source == "jin10"
     assert item.to_dict()["title"] == "x"
@@ -35,10 +39,16 @@ def test_news_providers_news_item_dataclass():
 def test_get_news_multi_source_shape():
     """空 stock_name 时返所有源 · 结构校验（不保证网络可达）."""
     from lib import news_providers as np
+
     with patch.object(np, "_http_get", return_value=None):
         r = np.get_news_multi_source(stock_code="", stock_name="", limit_per_source=5)
     assert "sources" in r
-    assert set(r["sources"].keys()) == {"jin10", "em_kuaixun", "em_stock_ann", "ths_news_today"}
+    assert set(r["sources"].keys()) == {
+        "jin10",
+        "em_kuaixun",
+        "em_stock_ann",
+        "ths_news_today",
+    }
     assert "total_hits" in r
     assert "sources_ok" in r
 
@@ -46,11 +56,14 @@ def test_get_news_multi_source_shape():
 def test_jin10_parses_var_newest_js():
     """jin10 返 var newest = [...] JS 格式 · 测试解析."""
     from lib import news_providers as np
+
     fake_js = 'var newest = [{"data": {"title": "测试快讯", "content": "内容"}, "time": "2026-04-19 10:00"}];'
     # 绕过缓存
-    with patch.object(np, "_cache_get", return_value=None), \
-         patch.object(np, "_http_get", return_value=fake_js), \
-         patch.object(np, "_cache_set"):
+    with (
+        patch.object(np, "_cache_get", return_value=None),
+        patch.object(np, "_http_get", return_value=fake_js),
+        patch.object(np, "_cache_set"),
+    ):
         items = np.fetch_jin10(limit=5)
     assert len(items) == 1
     assert items[0].source == "jin10"
@@ -60,10 +73,13 @@ def test_jin10_parses_var_newest_js():
 def test_em_kuaixun_parses_ajax_result():
     """em_kuaixun 返 var ajaxResult={...} JSON · 测试无尾 ; 也能解析."""
     from lib import news_providers as np
+
     fake_js = 'var ajaxResult={"LivesList":[{"title":"东财快讯","digest":"摘要","url_mobile":"http://x","showtime":"2026-04-19"}]}'
-    with patch.object(np, "_cache_get", return_value=None), \
-         patch.object(np, "_http_get", return_value=fake_js), \
-         patch.object(np, "_cache_set"):
+    with (
+        patch.object(np, "_cache_get", return_value=None),
+        patch.object(np, "_http_get", return_value=fake_js),
+        patch.object(np, "_cache_set"),
+    ):
         items = np.fetch_em_kuaixun(limit=5)
     assert len(items) == 1
     assert items[0].title == "东财快讯"
@@ -71,14 +87,24 @@ def test_em_kuaixun_parses_ajax_result():
 
 # ─── fetch_events 接入 news_providers ───────────────────────────
 
+
 def test_fetch_events_uses_news_providers(monkeypatch):
     """A 股 fetch_events 应调 news_providers.get_news_multi_source."""
     import fetch_events
+
     called = {"n": 0}
 
     def fake_multi(**kw):
         called["n"] += 1
-        return {"sources": {"jin10": [{"title": "测试利好合同", "publish_time": "2026-04-19", "url": ""}]}, "total_hits": 1, "sources_ok": 1}
+        return {
+            "sources": {
+                "jin10": [
+                    {"title": "测试利好合同", "publish_time": "2026-04-19", "url": ""}
+                ]
+            },
+            "total_hits": 1,
+            "sources_ok": 1,
+        }
 
     # mock cninfo / news / search
     monkeypatch.setattr(fetch_events, "_cninfo_disclosures", lambda c: [])
@@ -86,9 +112,11 @@ def test_fetch_events_uses_news_providers(monkeypatch):
     monkeypatch.setattr(fetch_events, "_web_search_events", lambda n: [])
     # 需要 patch 导入进去的 lib 层函数
     import lib.news_providers as np
+
     monkeypatch.setattr(np, "get_news_multi_source", fake_multi)
     # mock basic
     import lib.data_sources as ds
+
     monkeypatch.setattr(ds, "fetch_basic", lambda ti: {"name": "测试股"})
 
     r = fetch_events.main("002273.SZ")
@@ -98,7 +126,129 @@ def test_fetch_events_uses_news_providers(monkeypatch):
     assert "news_providers" in sources
 
 
+def test_fetch_events_integrates_mx_news(monkeypatch):
+    import fetch_events
+    import lib.data_sources as ds
+    import lib.mx_api as mx_api
+
+    class FakeMXClient:
+        def __init__(self):
+            self.available = True
+
+        def news_search(self, query: str):
+            return {
+                "data": {
+                    "data": {
+                        "newsList": [
+                            {
+                                "title": "测试股拿下大额订单",
+                                "publishTime": "2026-04-20 09:30:00",
+                                "summary": "订单驱动未来增长",
+                                "sourceName": "东方财富妙想",
+                                "url": "https://example.com/mx-news",
+                            }
+                        ]
+                    }
+                }
+            }
+
+    monkeypatch.setattr(fetch_events, "_cninfo_disclosures", lambda c: [])
+    monkeypatch.setattr(fetch_events, "_try_news", lambda c: [])
+    monkeypatch.setattr(fetch_events, "_web_search_events", lambda n: [])
+    monkeypatch.setattr(ds, "fetch_basic", lambda ti: {"name": "测试股"})
+    monkeypatch.setattr(mx_api, "MXClient", FakeMXClient)
+
+    r = fetch_events.main("002273.SZ")
+    data = r["data"]
+    assert "mx_api" in r.get("source", "")
+    assert data["recent_news"][0]["title"] == "测试股拿下大额订单"
+    assert data["news"][0]["title"] == "测试股拿下大额订单"
+    assert data["events"][0]["title"] == "测试股拿下大额订单"
+    assert data["recent_events"][0]["title"] == "测试股拿下大额订单"
+
+
+def test_fetch_events_sorts_unknown_dates_after_real_dates(monkeypatch):
+    import fetch_events
+    import lib.data_sources as ds
+    import lib.mx_api as mx_api
+    import lib.news_providers as np
+
+    class FakeMXClient:
+        def __init__(self):
+            self.available = True
+
+        def news_search(self, query: str):
+            return {
+                "data": {
+                    "data": {
+                        "newsList": [
+                            {
+                                "title": "无日期 MX 事件",
+                                "summary": "只有摘要没有日期",
+                                "sourceName": "东方财富妙想",
+                            }
+                        ]
+                    }
+                }
+            }
+
+    monkeypatch.setattr(fetch_events, "_cninfo_disclosures", lambda c: [])
+    monkeypatch.setattr(fetch_events, "_try_news", lambda c: [])
+    monkeypatch.setattr(fetch_events, "_web_search_events", lambda n: [])
+    monkeypatch.setattr(ds, "fetch_basic", lambda ti: {"name": "测试股"})
+    monkeypatch.setattr(mx_api, "MXClient", FakeMXClient)
+    monkeypatch.setattr(
+        np,
+        "get_news_multi_source",
+        lambda **kw: {
+            "sources": {
+                "jin10": [
+                    {
+                        "title": "有日期新闻",
+                        "publish_time": "2026-04-21 10:00",
+                        "url": "https://example.com/jin10",
+                    }
+                ]
+            },
+            "total_hits": 1,
+            "sources_ok": 1,
+        },
+    )
+
+    r = fetch_events.main("002273.SZ")
+    assert r["data"]["events"][0]["title"] == "有日期新闻"
+
+
+def test_extract_mx_news_items_ignores_non_string_keys_and_stops_early():
+    from fetch_events import _extract_mx_news_items
+
+    result = {
+        "data": {
+            "data": {
+                "newsList": [
+                    {
+                        "title": f"事件{i}",
+                        "publishTime": f"2026-04-{i:02d} 09:00",
+                        "summary": "x",
+                    }
+                    for i in range(1, 20)
+                ],
+                123: {
+                    "title": "奇怪键名事件",
+                    "publishTime": "2026-04-20 09:00",
+                    "summary": "ok",
+                },
+            }
+        }
+    }
+
+    rows = _extract_mx_news_items(result)
+    assert len(rows) == 12
+    assert rows[0]["title"] == "事件1"
+
+
 # ─── fetch_sentiment 接入 news_providers ────────────────────────
+
 
 def test_fetch_sentiment_integrates_news_multi(monkeypatch):
     import fetch_sentiment
@@ -108,8 +258,14 @@ def test_fetch_sentiment_integrates_news_multi(monkeypatch):
     monkeypatch.setattr(ds, "fetch_basic", lambda ti: {"name": "测试股"})
     monkeypatch.setattr(fetch_sentiment, "search", lambda *a, **k: [])
     # mock hottrend
-    monkeypatch.setattr("lib.hottrend.get_hot_mentions", lambda n: {"stock_name": n, "total_hits": 0})
-    fake_multi = {"sources": {"jin10": [{"title": "利好", "body": "看好突破"}]}, "total_hits": 1, "sources_ok": 1}
+    monkeypatch.setattr(
+        "lib.hottrend.get_hot_mentions", lambda n: {"stock_name": n, "total_hits": 0}
+    )
+    fake_multi = {
+        "sources": {"jin10": [{"title": "利好", "body": "看好突破"}]},
+        "total_hits": 1,
+        "sources_ok": 1,
+    }
     monkeypatch.setattr(np, "get_news_multi_source", lambda **kw: fake_multi)
 
     r = fetch_sentiment.main("002273.SZ")
@@ -121,21 +277,31 @@ def test_fetch_sentiment_integrates_news_multi(monkeypatch):
 
 # ─── yahoo v8 chart fallback ────────────────────────────────────
 
+
 def test_yahoo_v8_chart_parses_response():
     from lib.data_sources import _yahoo_v8_chart
+
     fake_resp = MagicMock()
     fake_resp.status_code = 200
     fake_resp.json.return_value = {
-        "chart": {"result": [{
-            "timestamp": [1704067200, 1704153600],
-            "indicators": {"quote": [{
-                "open": [100.0, 101.0],
-                "close": [101.5, 102.0],
-                "high": [102.0, 103.0],
-                "low": [99.5, 100.5],
-                "volume": [1000, 1100],
-            }]},
-        }]},
+        "chart": {
+            "result": [
+                {
+                    "timestamp": [1704067200, 1704153600],
+                    "indicators": {
+                        "quote": [
+                            {
+                                "open": [100.0, 101.0],
+                                "close": [101.5, 102.0],
+                                "high": [102.0, 103.0],
+                                "low": [99.5, 100.5],
+                                "volume": [1000, 1100],
+                            }
+                        ]
+                    },
+                }
+            ]
+        },
     }
     with patch("lib.data_sources.requests.get", return_value=fake_resp):
         rows = _yahoo_v8_chart("AAPL", range_="5d")
@@ -146,12 +312,28 @@ def test_yahoo_v8_chart_parses_response():
 
 def test_yahoo_v8_chart_retries_on_429():
     from lib.data_sources import _yahoo_v8_chart
+
     r429 = MagicMock(status_code=429)
     r_ok = MagicMock(status_code=200)
     r_ok.json.return_value = {
-        "chart": {"result": [{"timestamp": [1704067200], "indicators": {"quote": [{
-            "open": [1.0], "close": [2.0], "high": [3.0], "low": [0.5], "volume": [10],
-        }]}}]}
+        "chart": {
+            "result": [
+                {
+                    "timestamp": [1704067200],
+                    "indicators": {
+                        "quote": [
+                            {
+                                "open": [1.0],
+                                "close": [2.0],
+                                "high": [3.0],
+                                "low": [0.5],
+                                "volume": [10],
+                            }
+                        ]
+                    },
+                }
+            ]
+        }
     }
     seq = [r429, r_ok]
     with patch("lib.data_sources.requests.get", side_effect=lambda *a, **k: seq.pop(0)):
@@ -163,6 +345,7 @@ def test_yahoo_v8_chart_retries_on_429():
 def test_kline_us_chain_falls_through_to_yahoo_v8(monkeypatch):
     """yf + ak 全失败时，应调 _yahoo_v8_chart."""
     import lib.data_sources as ds
+
     called = {"v8": 0}
 
     def fake_v8(sym, range_="2y"):
@@ -182,9 +365,11 @@ def test_kline_us_chain_falls_through_to_yahoo_v8(monkeypatch):
 
 # ─── cfachina 接入 fetch_policy ─────────────────────────────────
 
+
 def test_fetch_policy_futures_industry_calls_cfachina(monkeypatch):
     """期货/商品 industry 时，fetch_policy 应触发 _fetch_cfachina_titles."""
     import fetch_policy
+
     called = {"cfa": 0}
 
     def fake_cfa(limit=10):
@@ -203,6 +388,7 @@ def test_fetch_policy_futures_industry_calls_cfachina(monkeypatch):
 def test_fetch_policy_non_futures_skips_cfachina(monkeypatch):
     """非期货 industry（如光学光电子）不调 cfachina."""
     import fetch_policy
+
     called = {"cfa": 0}
 
     def fake_cfa(limit=10):
