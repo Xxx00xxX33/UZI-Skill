@@ -1,7 +1,6 @@
 """pipeline.run · 编排入口 · collect → score → synthesize.
 
-**opt-in · 默认关闭**：必须 `UZI_PIPELINE=1` 才会启用。
-老路径 `run_real_test.stage1()/stage2()` 仍是默认 · 零业务影响.
+**v3.0.0 默认路径**：`run.py <ticker>` 默认走这里。`UZI_LEGACY=1` 才走 legacy.
 
 用法：
     from lib.pipeline.run import run_pipeline
@@ -18,19 +17,22 @@ from .synthesize import synthesize_and_render
 
 
 def run_pipeline(ticker: str, resume: bool = True) -> str:
-    """完整管道入口（Phase 6a delegate 模式）.
+    """完整管道入口（v3.0.0 主干）.
 
-    1. pipeline.collect · 用 22 BaseFetcher adapter 抓数据
-    2. 把结果写到 .cache/<ticker>/raw_data.json（与 legacy 兼容）
-    3. 调 legacy stage1 做 scoring（resume 模式复用我们写的 cache）
-    4. 调 legacy stage2 生成报告
+    1. pipeline.collect · 用 22 BaseFetcher adapter 并发抓数据（max_workers=6）
+    2. 写 .cache/<ticker>/raw_data.json（与 legacy schema 兼容）
+    3. pipeline.score_from_cache · 直接调 rrt 纯函数（score_dimensions / generate_panel /
+       generate_synthesis）· 不再调 stage1（stage1 会重新 collect）
+    4. pipeline.synthesize_and_render · 调 stage2（stage2 只读 cache 不 collect · OK）
 
-    **中间过渡状态** · collect 由新管道接管 · score/synthesize 仍走 legacy.
-    Phase 6/7（未来 session）逐步把 score/synthesize 内部逻辑也迁进来.
+    Phase 6c 升级：score 阶段解耦 legacy stage1 · 不再重复 collect · 省 5-10 min/股.
     """
+    # v3.0.0 · pre-flight guards · 不兼容场景抛异常让 run.py fallback legacy（legacy 有完整解析）
+    _preflight_guards(ticker)
+
     print(f"🚀 [pipeline.run] collect · {ticker}")
     raw_previous = _load_cache(ticker) if resume else {}
-    raw_dict = pipeline_collect(ticker, raw_previous=raw_previous, max_workers=1)
+    raw_dict = pipeline_collect(ticker, raw_previous=raw_previous, max_workers=6)
 
     # 组装 legacy 兼容 raw_data.json（dimensions + 顶层溢出字段）
     raw_data_compatible = {
@@ -43,11 +45,40 @@ def run_pipeline(ticker: str, resume: bool = True) -> str:
             raw_data_compatible[k] = raw_dict[k]
 
     _write_cache(ticker, raw_data_compatible)
-    print(f"✅ [pipeline.run] raw_data.json 已写 · 调 legacy scoring+synth")
+    print(f"✅ [pipeline.run] raw_data.json 已写 · 进入 scoring 段（v3.0 纯函数编排）")
 
-    # 复用 legacy stage1 (resume · 跳 collect 只做 scoring) + stage2
+    # pipeline.score_from_cache · 直接调 rrt.score_dimensions/generate_panel/generate_synthesis
+    # 不再走 rrt.stage1（stage1 会重新 collect · 浪费时间）
     score_from_cache(ticker)
     return synthesize_and_render(ticker)
+
+
+def _preflight_guards(ticker: str) -> None:
+    """v3.0.0 · pipeline 不覆盖的场景 · 抛异常让 run.py 回退 legacy.
+
+    抛 ValueError 触发 fallback（不 crash · run.py catch 后走 legacy stage1 能正常处理）.
+    """
+    from lib.market_router import is_chinese_name, parse_ticker, classify_security_type
+
+    # 1. 中文名 · 由 legacy stage1 的 resolve_chinese_name_rich 处理
+    if is_chinese_name(ticker):
+        raise ValueError(
+            f"pipeline: 中文名 {ticker!r} 需 legacy 解析 · fallback"
+        )
+
+    # 2. ETF / LOF / 可转债 · legacy stage1 有完整 guidance
+    try:
+        ti = parse_ticker(ticker)
+        if ti.market == "A":
+            sec_type = classify_security_type(ti.code)
+            if sec_type in ("etf", "lof", "convertible_bond", "index"):
+                raise ValueError(
+                    f"pipeline: {sec_type} 证券类型需 legacy 处理 · fallback"
+                )
+    except ValueError:
+        raise  # 重新抛 · 让 run.py fallback
+    except Exception:
+        pass  # 其他异常（parse 失败）· 让 pipeline 自己尝试 · 失败后再 fallback
 
 
 def _load_cache(ticker: str) -> dict:

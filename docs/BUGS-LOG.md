@@ -7,6 +7,28 @@
 
 ---
 
+## v3.0.0 (2026-04-23 · pipeline 架构默认启用 + Phase 6c 解耦)
+
+### REFACTOR · pipeline 成为主干 · legacy 转作 fallback
+- **症状**：v2.x 连续 5 个 hotfix 都落在 assemble_report.py (2964 行) + run_real_test.py (2105 行) 两个巨文件 · 屎山深重
+- **位置**：`run.py::main`（默认路径切换）+ `lib/pipeline/score.py`（Phase 6c 解耦）+ `lib/pipeline/run.py`（pipeline 编排）
+- **根因**：v2.15.x 的 Phase 6a delegate 模式下 `pipeline.score_from_cache` 直接调 `rrt.stage1(ticker)` · 但 stage1 内部会重新跑 22 fetcher collect · 和 pipeline 刚做完的 collect 重复 · 每股多耗 5-10 分钟
+- **影响**：pipeline dark-launch 两周下来 opt-in 用户反馈"比 legacy 慢" · 原因是重复 collect
+- **修法**（3 步）：
+  1. `pipeline/score.py::score_from_cache` 改为调 rrt 纯函数（`score_dimensions` / `generate_panel` / `generate_synthesis` / `_autofill_qualitative_via_mx`）· 不再调 `stage1`
+  2. `pipeline/run.py::run_pipeline` 加 `_preflight_guards(ticker)` · 中文名 / ETF / LOF / 可转债 → 抛 `ValueError` 让 run.py fallback legacy（legacy 有完整交互）
+  3. `run.py::main` 默认走 pipeline · `UZI_LEGACY=1` 强制走老路径 · pipeline 异常自动 fallback · 附 traceback
+- **验证**：002217 resume 模式 `run_pipeline` 46.9s 出报告 · 以前约 120s+（score_from_cache 从 180s → 10.6s）
+- **回归测试**：332 tests 全过（253 legacy + 79 pipeline）· 含 score/synthesize/collect/run_pipeline 的模块单测
+- **未来改该区域注意事项**：
+  - `pipeline.score_from_cache` 依赖 rrt 的 4 个函数签名 · 任何一个签名变 · pipeline 同步改（现状：`score_dimensions(raw)` / `generate_panel(dims_scored, raw)` / `generate_synthesis(raw, dims_scored, panel, agent_analysis=None)` / `_autofill_qualitative_via_mx(raw, ticker)`）
+  - `pipeline/synthesize.py` 仍是 delegate · 调 `rrt.stage2(ticker)` · stage2 只读 cache 不 collect · 安全（改 stage2 时注意保持"只读 cache"原则）
+  - `_preflight_guards` 里的异常类型必须是 `ValueError` · 其他异常 run.py 不会 fallback（视为 crash）
+  - 如果 legacy 某个纯函数名变（如 `generate_panel` → `build_panel`）· pipeline/score.py 必须同步改 · 否则 AttributeError
+  - `UZI_LEGACY=1` 是保险开关 · 绝不删 · 出问题时用户能临时回退
+
+---
+
 ## v2.15.5 (2026-04-23 · 评分聚集在一个区间 · 区分度不足)
 
 ### BUG · consensus 公式把连续分压成三分类 + 规则严苛导致结构性居中

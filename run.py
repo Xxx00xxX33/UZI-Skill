@@ -356,17 +356,24 @@ def main():
     # 运行分析（抑制 run_real_test 内部的自动开浏览器）
     os.environ["UZI_NO_AUTO_OPEN"] = "1"
 
-    # v3.0.0 · Phase 7 · opt-in 管道入口 · UZI_PIPELINE=1 走 pipeline.run_pipeline · 默认 legacy
-    # 新管道当前是 delegate 模式（collect 新 · scoring/synth 仍调 legacy）· 安全切换期
+    # v3.0.0 · pipeline 为主干 · 默认启用
+    #   - UZI_LEGACY=1 → 强制走 legacy stage1+stage2（老路径 · 全量兼容）
+    #   - 不设 env    → 走 pipeline.run_pipeline（collect + score + synthesize 全新）
+    #   - pipeline 异常 → 自动回退 legacy · 绝不中断业务
+    # 原 UZI_PIPELINE=1 仍兼容接受（无操作 · 同默认）
     _pipeline_succeeded = False
-    if os.environ.get("UZI_PIPELINE") == "1":
+    _force_legacy = os.environ.get("UZI_LEGACY") == "1"
+    _pipeline_requested = not _force_legacy
+    if _pipeline_requested:
         try:
             from lib.pipeline.run import run_pipeline
-            print("🚀 [run.py] UZI_PIPELINE=1 · 走新管道（delegate 模式）")
+            print("🚀 [run.py] v3.0.0 pipeline · 默认路径")
             run_pipeline(args.ticker, resume=not args.no_resume)
             _pipeline_succeeded = True
         except Exception as e:
             print(f"⚠️  [run.py] pipeline 异常 · 回退 legacy: {type(e).__name__}: {str(e)[:100]}")
+            import traceback
+            traceback.print_exc()
             _pipeline_succeeded = False
 
     from run_real_test import main as run_analysis, stage1 as _stage1, stage2 as _stage2

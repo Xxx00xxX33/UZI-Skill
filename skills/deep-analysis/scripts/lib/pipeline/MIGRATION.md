@@ -328,14 +328,28 @@ A:
 - merge `refactor/v3.0.0-pipeline-architecture` → `main` · tag v3.0.0
 - **触发条件**：至少 20 只股票连续 UAT 通过 · 无回归报告 · 用户确认切换
 
-## 状态总结
+## 状态总结（v3.0.0 已发布）
 
-- ✅ **Phase 1-7 完成** · 所有管道基础设施到位 · 默认走 legacy · opt-in 走 pipeline
-- ⏳ **Phase 6c + 8 需 UAT 验证后再做** · 这两步涉及删老代码或内部逻辑重写 · 风险最高
-- **本分支不合 main** 直到 Phase 6c/8 完成 · 业务流程完全不受影响
+- ✅ **Phase 1-7 完成** · 所有管道基础设施到位
+- ✅ **Phase 6c 完成** · pipeline.score 真正解耦 legacy stage1 · 不再重复 collect
+- ✅ **v3.0.0 默认启用** · `run.py` 默认走 pipeline · `UZI_LEGACY=1` fallback
+- ⏳ **Phase 8a 待做** · 22 个 fetcher adapter 内化 legacy 逻辑 · 删 `fetch_X.py`（v3.1）
+- ⏳ **Phase 8b 待做** · assemble_report.py 改 import renderer/ · 瘦身（v3.2）
+- ⏳ **v3.3** · run_real_test.py 瘦身到 < 200 行 · 只保留 fallback 入口
 
-## 老入口保持工作
+## 新入口（v3.0.0 起）
 
-`run.py`, `stage1()`, `stage2()`, `assemble_report.py`, 22 个 `fetch_*.py` 全部不动 · zero 业务中断.
+```
+run.py → pipeline.run_pipeline      # 默认
+       → rrt.stage1 + rrt.stage2    # UZI_LEGACY=1 或 pipeline 异常时 fallback
+```
 
-新 pipeline `UZI_PIPELINE=1` 启用后仅接管 collect 阶段 · score/synthesize 仍走老代码.
+pipeline.run_pipeline 内部：
+```
+collect (22 BaseFetcher · max_workers=6)
+  → raw_data.json
+  → score_from_cache (调 rrt 纯函数 · 不再走 stage1)
+    → dimensions.json / panel.json / synthesis.json
+  → synthesize_and_render (调 rrt.stage2 · 只读 cache 安全)
+    → reports/<ticker>_<date>/full-report-standalone.html
+```

@@ -1,5 +1,74 @@
 # Release Notes
 
+## v3.0.0 — 2026-04-23 (pipeline 架构为主干 · 默认启用)
+
+> **用户反馈**："直接重构到 3.0 吧 · 按你推荐的来"
+
+### 主线升级 · v3.0.0 pipeline 架构默认启用
+
+v2.15.x 用 `UZI_PIPELINE=1` opt-in 跑了两周（7 股 dark-launch 零回归）· 现在切为默认.
+
+**改动**：
+
+- `run.py::main` · pipeline.run_pipeline **默认启用** · 以前 opt-in 的 `UZI_PIPELINE=1` 变成 no-op（等于默认）· 新增 `UZI_LEGACY=1` 开关强制走老 stage1/stage2 作为保险
+- pipeline 异常自动回退 legacy · 附 traceback 便于排查 · 业务零中断
+
+### Phase 6c · pipeline.score 解耦 legacy stage1（性能 · 正确性）
+
+以前 `pipeline.score_from_cache(ticker)` 的实现是调 `rrt.stage1(ticker)` —— 但 stage1 会 **重新跑 collect 段** · pipeline 前面刚 collect 完 · 重复 5-10 分钟.
+
+现在 `score_from_cache` 直接调 rrt 的纯函数：
+
+```python
+raw = json.load(raw_data_path)
+rrt._autofill_qualitative_via_mx(raw, ticker)   # 原地改
+autofill_via_playwright(raw, ticker)            # 原地改
+dims_scored = rrt.score_dimensions(raw)         # 纯函数
+panel       = rrt.generate_panel(dims_scored, raw)
+synthesis   = rrt.generate_synthesis(raw, dims_scored, panel)
+```
+
+**性能实测（002217 resume）**：全流程 46.9s（collect + score + synth + render + png）· 以前 opt-in 模式约 120s+.
+
+### Pipeline 预检 guards
+
+pipeline 入口加了 `_preflight_guards(ticker)` · 识别中文名 / ETF / LOF / 可转债 → `ValueError` · run.py 自动回退 legacy（legacy 有完整的 resolve / classify / candidate 建议交互）· 用户体验无降级.
+
+### 架构现状（v3.0.0）
+
+| 模块 | 状态 | 说明 |
+|---|---|---|
+| `lib/pipeline/collect.py` | ✅ 主干 | 22 BaseFetcher adapter 并发 · max_workers=6 |
+| `lib/pipeline/score.py` | ✅ 主干 | 纯函数编排 · 不再 delegate stage1 |
+| `lib/pipeline/synthesize.py` | ⚠️ 薄 wrapper | 调 stage2（stage2 只读 cache 不 collect · 安全） |
+| `lib/pipeline/fetchers/` | ✅ 22/22 | 每个 adapter 内部仍调 legacy `fetch_X.main()` |
+| `lib/pipeline/renderer/` | ✅ 21/21 | 已有但 assemble_report.py 暂未改调 · Phase 8b |
+| `run_real_test.py` | ⚠️ 仍在 | 提供纯函数给 pipeline 调 · stage1/stage2 作 fallback |
+| `assemble_report.py` | ⚠️ 2964 行 | 暂不瘦身 · 风险高 · 后续 minor 版本做 |
+
+### 后续计划（非阻塞）
+
+- **v3.1** · Phase 8a · fetcher adapter 内化 legacy 抓取逻辑 · 删 `fetch_X.py` legacy 文件
+- **v3.2** · Phase 8b · assemble_report.py 改 import renderer/ · 瘦身到 < 400 行
+- **v3.3** · run_real_test.py 瘦身到 < 200 行（只保留 stage1/stage2 兜底入口）
+
+### 回归测试
+
+- 332 tests 全过（253 legacy + 79 pipeline）
+- 真机 e2e · 002217 resume 模式 46.9s 成功出报告
+- pipeline.score 耗时 10.6s（以前 180s+）
+
+### 破坏性变更
+
+⚠️ 默认行为变化：
+- **之前**：`python run.py 300470.SZ` → legacy stage1+stage2（老路径）
+- **现在**：`python run.py 300470.SZ` → pipeline.run_pipeline（新路径）
+- **回滚**：`UZI_LEGACY=1 python run.py 300470.SZ` · 强制走老路径
+
+测试和报告输出保持 100% 兼容 · raw_data.json / dimensions.json / panel.json / synthesis.json schema 一致.
+
+---
+
 ## v2.15.5 — 2026-04-23 (评分公式重校准 · 混合公式 + 极化拉伸)
 
 > **用户反馈**："现在评分大多数都在一个区间内徘徊，你看看是什么问题，是否需要优化"
