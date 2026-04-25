@@ -12,7 +12,7 @@
 [![Methods](https://img.shields.io/badge/Institutional%20Methods-17-red)]()
 [![Self-Review](https://img.shields.io/badge/Self--Review-13%20checks-blueviolet)](skills/deep-analysis/scripts/lib/self_review.py)
 
-**A-share / HK / US deep-analysis engine — with first-class Chinese-market coverage Western terminals don't touch. v2.15.0: YAML persona layer (12 flagship + 39 stub · fixes 4 historical-stance bugs in Rules engine) · v2.14.0: auto GitHub update check · mechanical self-review gate (13 checks).**
+**A-share / HK / US deep-analysis engine — with first-class Chinese-market coverage Western terminals don't touch. v3.2.0: architectural split of `assemble_report.py` (2964→587 lines, -80%) · v3.1.0: `run_real_test.py` refactor (-65%) · v3.0.0: pipeline architecture default (UZI_LEGACY=1 falls back). v2.x APIs 100% compatible via re-export · 332 pytest pass.**
 
 [Install](#install) · [Usage](#usage) · [Why Western Investors Should Care](#-why-western-investors-should-care) · [Jury Panel](#-51-investor-jury) · [Methods](#-17-institutional-methods) · [Self-Review Gate 🆕](#-mechanical-self-review-gate-new-in-v29) · [Screenshots](#-what-the-report-looks-like) · [FAQ](#-faq)
 
@@ -62,7 +62,7 @@ After 5-8 minutes you get:
 This is early-stage; forum reports plenty of bugs. If you want to help test or just trade notes, WeChat group QR below (primarily Chinese-speaking — if you prefer English, file issues on GitHub and we'll reply). For the latest features, track the `develop` branch.
 
 <p align="center">
-  <img src="docs/screenshots/b9857c297761d9420c45285b4fce2255.jpg" width="300" alt="WeChat group QR code" />
+  <img src="docs/screenshots/b8869535930c6e362545990e98f24890.jpg" width="300" alt="WeChat group QR code" />
 </p>
 
 ---
@@ -365,6 +365,13 @@ python run.py <ticker> --no-resume
 ---
 
 ## 🛠 Architecture in One Diagram
+
+> **v3.0–v3.2 pipeline refactor** (2026-04-23) · Two-file legacy monolith split into a pipeline architecture:
+> - `run_real_test.py`: 2105 → 735 lines (-65%) · pure functions moved to `lib/pipeline/score_fns.py`
+> - `assemble_report.py`: 2964 → 587 lines (-80%) · split into 5 `lib/report/*` submodules
+> - `python run.py <ticker>` now defaults to `pipeline.run_pipeline` · `UZI_LEGACY=1` falls back
+> - All v2.x public APIs preserved via `re-export` · 332 pytest pass · zero behavioral diff
+> See [CODEX.md](CODEX.md) / [AGENTS.md](AGENTS.md) for v3.2 repo layout details.
 
 ```
           user says "/analyze-stock BABA"

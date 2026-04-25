@@ -26,7 +26,13 @@ def _make_dims(nums):
 
 
 def _reset_profile_env():
-    for k in ("UZI_DEPTH", "UZI_LITE", "UZI_CLI_ONLY"):
+    for k in (
+        "UZI_DEPTH",
+        "UZI_LITE",
+        "UZI_CLI_ONLY",
+        "UZI_SKIP_BONUS_FETCHERS",
+        "UZI_STAGE2_SKIP_OPTIONAL_RENDERS",
+    ):
         os.environ.pop(k, None)
 
 
@@ -56,6 +62,19 @@ def test_check_all_dims_lite_respects_profile():
 def test_lite_fast_path_skips_bonus_fetchers():
     _reset_profile_env()
     os.environ["UZI_LITE"] = "1"
+    import importlib
+    import run_real_test as rrt
+
+    importlib.reload(rrt)
+
+    assert rrt._should_skip_bonus_fetchers() is True
+    _reset_profile_env()
+
+
+def test_bonus_fetcher_skip_respects_env_override():
+    _reset_profile_env()
+    os.environ["UZI_LITE"] = "0"
+    os.environ["UZI_SKIP_BONUS_FETCHERS"] = "1"
     import importlib
     import run_real_test as rrt
 

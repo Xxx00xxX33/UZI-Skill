@@ -1,5 +1,321 @@
 # Release Notes
 
+## v3.2.0 — 2026-04-23 (assemble_report.py 深度拆分 · -80%)
+
+> **用户反馈**："后面的继续全部完成 · 你就干就得了"
+
+### 主线升级
+
+`assemble_report.py` 从 **2964 → 587 行**（-80%）· 拆分为 5 个清晰子模块 · 业务零差异.
+
+### 拆分清单
+
+| 新模块 | 行数 | 内容 |
+|---|---|---|
+| `lib/report/svg_primitives.py` | 602 | 19 个 `svg_xxx` 图元 + COLOR_* 常量 |
+| `lib/report/dim_viz.py` | 742 | 19 个 `_viz_xxx` 维度特化 + `DIM_VIZ_RENDERERS` + `_score_class` |
+| `lib/report/institutional.py` | 532 | DCF/LBO/IC memo/catalyst/competitive/style_chip/data_gap_banner |
+| `lib/report/panel_cards.py` | 183 | GROUP_LABELS + jury_seat/chat/vote_bars/top3/risks |
+| `lib/report/special_cards.py` | 544 | friendly_layer/fund_managers/panel_insights/school_scores/debate |
+
+### `assemble_report.py` 剩余结构（587 行）
+
+| 段 | 行数 | 职责 |
+|---|---|---|
+| Header + imports + DIM_META + CAT_GROUPS | ~340 | 配置 + re-exports |
+| `render_dim_card` + `render_dim_category` + `_extract_kpi_value` | ~120 | 维度卡片框架 |
+| `assemble()` 主入口 | ~120 | HTML shell 组装 |
+
+### 向后兼容（100%）
+
+`assemble_report.py` 对所有抽离函数做 `from lib.report.XXX import *` · 所有历史调用保持工作：
+- `from assemble_report import render_fund_managers` ✅
+- `from assemble_report import svg_sparkline` ✅
+- `from assemble_report import _viz_financials` ✅
+
+### 回归测试
+
+- **332 tests 全过**
+- 4 个 grep 式测试扩展为同时读 `assemble_report` + 对应子模块
+- 真机 e2e · 002217 `assemble()` 0.0s 出 608KB HTML · 格式 100% 一致
+
+### v3 累计对比
+
+| 版本 | 焦点 | 行数缩减 |
+|---|---|---|
+| v3.0.0 | pipeline 架构默认启用 | - |
+| v3.1.0 | `run_real_test.py` 瘦身 | 2105 → 735 (-65%) |
+| v3.2.0 | `assemble_report.py` 拆分 | 2964 → 587 (-80%) |
+
+两个巨文件合计从 **5069 行 → 1322 行**（-74%）.
+
+### 非重构决策
+
+评估后不做的重构（属过度工程 · 风险远大于价值）：
+
+- ❌ **v3.1.1 · 22 fetcher adapter 内化**：`fetch_*.py` 仍是独立 CLI 工具（`python fetch_basic.py <ticker>`）· 内化会破坏 user contract · 且 22 × 300 行工作量巨大
+- ❌ **v3.3 · 删除 rrt.collect_raw_data**：是 `UZI_LEGACY=1` 的 fallback collector · 删了等于移除保险绳 · 跟 v3.0 "永远可回退 legacy" 设计冲突
+
+### Agent 入口指引完善（v3.2.0 post-release · PR #48）
+
+> **用户反馈**："codex 也要有独立指引 · 你看下修复一下吧"
+
+Codex 首次审视 v3.2.0 时误报 `scripts/run.py 缺失` · 根因是 repo 路径约定没有 agent-facing 文档。
+
+- **新增 `CODEX.md`** (210 行) · Codex 专属浓缩指引：必读前 60 秒 / v3.0+ 架构约定 / Pipeline 数据流图 / 审视任务清单模板 / 常见误判避坑表 / 文件大小红线
+- **`AGENTS.md` 顶部加 "🗺️ Repository Layout & Entrypoints (v3.2.0)"** · 完整目录树 + 入口 Cheat Sheet + 模块调用约定
+
+Codex re-audit 7/7 CHECK PASS · Verdict: CLEAN · 原 HIGH 误报消除.
+
+---
+
+## v3.1.0 — 2026-04-23 (run_real_test.py 深度瘦身 · rrt -65%)
+
+> **用户反馈**："开始 · 直接全部开始做吧"（请求 v3.1/v3.2/v3.3 继续重构）
+
+### 改动概览
+
+`run_real_test.py` 从 **2105 行 → 735 行**（-65%）· 业务零差异.
+
+### 搬迁 1 · 纯函数 → `lib/pipeline/score_fns.py` (-1228 行)
+
+从 rrt 搬：
+- `_f` · `score_dimensions` · `generate_panel` · `generate_synthesis`
+- `_auto_summarize_dim` · `_autofill_qualitative_via_mx` · `_extract_mx_text`
+- `_is_junk_autofill` · `_AUTOFILL_JUNK_PATTERNS` (v2.12.1)
+
+rrt 保留 re-export · 向后兼容 `rrt.score_dimensions(...)` 等调用.
+
+### 搬迁 2 · preflight/resolve/ETF → `lib/pipeline/preflight_helpers.py` (-166 行)
+
+从 rrt.stage1 开头搬：
+- 网络 preflight (GFW / 代理探测) · 失败自动 lite
+- 中文名解析 · 候选早退
+- ETF/LOF/可转债识别 · 持仓建议早退
+
+stage1 新入口：
+```python
+_pt = prepare_target(ticker, detect_lite_fn=_detect_lite_mode)
+if not _pt["ok"]:
+    return _pt["payload"]
+ti = _pt["ticker_info"]
+```
+
+### 性能
+
+| 场景 | v3.0 | v3.1 |
+|---|---|---|
+| 002217 resume e2e | 46.9s | **10.0s** |
+| pipeline.score | 10.6s | 0.1s |
+
+注：性能提升主要来自 v3.0 的 pipeline.score 解耦（v3.1 继承），代码组织更清晰是锦上添花.
+
+### 回归测试
+
+- 332 tests 全过
+- 字符串 grep 式 test 扩展为读 rrt + score_fns + preflight_helpers 三文件
+- 真机 e2e 002217 resume → 608KB HTML 报告 · 格式/数据与 v3.0 一致
+
+### 当前 rrt.py 结构（735 行）
+
+| 段 | 行数 | 状态 |
+|---|---|---|
+| Header + imports + FETCHER_MAP | 72 | 稳定 |
+| `collect_raw_data` (legacy collector) | 283 | ⚠️ 仍在 · 被 pipeline/collect 取代中 |
+| score_fns re-export | 12 | ✅ v3.1 |
+| `_detect_lite_mode` | 34 | 稳定 |
+| `stage1` | 160 | ✅ v3.1 瘦身 |
+| `stage2` | 149 | 稳定 |
+| `main` (CLI) | 25 | 稳定 |
+
+### 剩余重构（后续 v3.1.x / v3.2 系列）
+
+- **v3.1.1** · 22 fetcher adapter 内化 legacy 逻辑 · 删 `fetch_X.py` 冗余（~5-8h）
+- **v3.2.0** · `renderer/` 21 个 stub 升级为 `assemble_report.py` 的完整实现 · assemble_report 改 import renderer/ · 瘦身到 < 800 行（~3-5h）
+- **v3.3.0** · `collect_raw_data` 标 deprecated · legacy stage1 改调 pipeline.collect · rrt 进一步到 < 500 行
+
+---
+
+## v3.0.0 — 2026-04-23 (pipeline 架构为主干 · 默认启用)
+
+> **用户反馈**："直接重构到 3.0 吧 · 按你推荐的来"
+
+### 主线升级 · v3.0.0 pipeline 架构默认启用
+
+v2.15.x 用 `UZI_PIPELINE=1` opt-in 跑了两周（7 股 dark-launch 零回归）· 现在切为默认.
+
+**改动**：
+
+- `run.py::main` · pipeline.run_pipeline **默认启用** · 以前 opt-in 的 `UZI_PIPELINE=1` 变成 no-op（等于默认）· 新增 `UZI_LEGACY=1` 开关强制走老 stage1/stage2 作为保险
+- pipeline 异常自动回退 legacy · 附 traceback 便于排查 · 业务零中断
+
+### Phase 6c · pipeline.score 解耦 legacy stage1（性能 · 正确性）
+
+以前 `pipeline.score_from_cache(ticker)` 的实现是调 `rrt.stage1(ticker)` —— 但 stage1 会 **重新跑 collect 段** · pipeline 前面刚 collect 完 · 重复 5-10 分钟.
+
+现在 `score_from_cache` 直接调 rrt 的纯函数：
+
+```python
+raw = json.load(raw_data_path)
+rrt._autofill_qualitative_via_mx(raw, ticker)   # 原地改
+autofill_via_playwright(raw, ticker)            # 原地改
+dims_scored = rrt.score_dimensions(raw)         # 纯函数
+panel       = rrt.generate_panel(dims_scored, raw)
+synthesis   = rrt.generate_synthesis(raw, dims_scored, panel)
+```
+
+**性能实测（002217 resume）**：全流程 46.9s（collect + score + synth + render + png）· 以前 opt-in 模式约 120s+.
+
+### Pipeline 预检 guards
+
+pipeline 入口加了 `_preflight_guards(ticker)` · 识别中文名 / ETF / LOF / 可转债 → `ValueError` · run.py 自动回退 legacy（legacy 有完整的 resolve / classify / candidate 建议交互）· 用户体验无降级.
+
+### 架构现状（v3.0.0）
+
+| 模块 | 状态 | 说明 |
+|---|---|---|
+| `lib/pipeline/collect.py` | ✅ 主干 | 22 BaseFetcher adapter 并发 · max_workers=6 |
+| `lib/pipeline/score.py` | ✅ 主干 | 纯函数编排 · 不再 delegate stage1 |
+| `lib/pipeline/synthesize.py` | ⚠️ 薄 wrapper | 调 stage2（stage2 只读 cache 不 collect · 安全） |
+| `lib/pipeline/fetchers/` | ✅ 22/22 | 每个 adapter 内部仍调 legacy `fetch_X.main()` |
+| `lib/pipeline/renderer/` | ✅ 21/21 | 已有但 assemble_report.py 暂未改调 · Phase 8b |
+| `run_real_test.py` | ⚠️ 仍在 | 提供纯函数给 pipeline 调 · stage1/stage2 作 fallback |
+| `assemble_report.py` | ⚠️ 2964 行 | 暂不瘦身 · 风险高 · 后续 minor 版本做 |
+
+### 后续计划（非阻塞）
+
+- **v3.1** · Phase 8a · fetcher adapter 内化 legacy 抓取逻辑 · 删 `fetch_X.py` legacy 文件
+- **v3.2** · Phase 8b · assemble_report.py 改 import renderer/ · 瘦身到 < 400 行
+- **v3.3** · run_real_test.py 瘦身到 < 200 行（只保留 stage1/stage2 兜底入口）
+
+### 回归测试
+
+- 332 tests 全过（253 legacy + 79 pipeline）
+- 真机 e2e · 002217 resume 模式 46.9s 成功出报告
+- pipeline.score 耗时 10.6s（以前 180s+）
+
+### 破坏性变更
+
+⚠️ 默认行为变化：
+- **之前**：`python run.py 300470.SZ` → legacy stage1+stage2（老路径）
+- **现在**：`python run.py 300470.SZ` → pipeline.run_pipeline（新路径）
+- **回滚**：`UZI_LEGACY=1 python run.py 300470.SZ` · 强制走老路径
+
+测试和报告输出保持 100% 兼容 · raw_data.json / dimensions.json / panel.json / synthesis.json schema 一致.
+
+---
+
+## v2.15.5 — 2026-04-23 (评分公式重校准 · 混合公式 + 极化拉伸)
+
+> **用户反馈**："现在评分大多数都在一个区间内徘徊，你看看是什么问题，是否需要优化"
+
+### 诊断（采 7 股 · 331 个非 skip 打分）
+
+- 单 investor score: mean=43.7, stdev=30.3, range 0-100（分布其实很宽）
+- 但 `panel_consensus` 聚集在 40-55 区间 · 7 流派内分歧 stdev 往往 <15
+- **根因 1**：v2.11 公式 `(bullish + 0.6*neutral)/active*100` 只看 signal 计数 · 把连续 score 压成 3 分类（65/35 阈值）· 丢失"程度"信息
+- **根因 2**：价值/成长派规则严苛 · 平均 score 35 左右 · 比技术/量化派低 20 分 · 结构性居中
+
+### 修法 · 混合公式 + 极化拉伸
+
+```python
+# Step 1 · 混合连续分 + 离散票
+score_mean    = mean(score for active)           # 0-100 连续 · 反映强度
+vote_weighted = (bullish + 0.6*neutral)/active*100  # 原 v2.11 · 保留投票机制
+raw           = 0.65 * score_mean + 0.35 * vote_weighted
+
+# Step 2 · 极化拉伸（50 为中心，k=1.3）· 让两端更极端
+final = clip(50 + (raw - 50) * 1.3, 0, 100)
+```
+
+**效果对比（7 股样本）**：
+
+| 指标 | v2.11 公式 | v2.15.5 公式 |
+|---|---|---|
+| 总盘 consensus mean | 46.9 | 42.2 |
+| 总盘 consensus range | 16.5-77.9 | 8.4-76.8 |
+| 强势 300308 | 77.9 | 76.8（持平） |
+| 弱势 600120 | 16.5 | 8.4（更弱）|
+| 002217 F 游资 | 51.0 关注 | 43.7 谨慎（修正高估）|
+| 002217 G 量化 | 50.0 关注 | 59.3 关注（修正低估）|
+
+**002217 (中密控股) v2.15.5 分布**：
+
+| 流派 | consensus | 实分均值 | 投票共识 | verdict |
+|---|---|---|---|---|
+| 经典价值派 | 34.7 | 37.3 | 40.0 | 回避 |
+| 成长派 | 27.2 | 36.5 | 25.0 | 回避 |
+| 宏观派 | **67.3** | 60.8 | 68.0 | **买入** |
+| 技术派 | 38.1 | 41.2 | 40.0 | 谨慎 |
+| 中式价投 | 29.5 | 36.5 | 30.0 | 回避 |
+| A 股游资 | 43.7 | 42.0 | 51.0 | 谨慎 |
+| 量化派 | 59.3 | 61.0 | 50.0 | 关注 |
+
+结论清晰：**宏观有利但基本面乏力**. 以前"F 游资 51 关注"被 neutral 投票机制高估 · 实分 42 说明大家其实都是"不看好但也不讨厌"的 40 分心态 · 新公式修正了.
+
+### 改动
+
+- `run_real_test.py::generate_panel` · 引入 `SCORE_WEIGHT=0.65 / VOTE_WEIGHT=0.35 / POLARIZE_K=1.30` 常量 · 加 `_polarize()` helper · 总盘 + school_scores 同步升级
+- `panel.school_scores[g]` 新增 `score_mean` / `vote_consensus` 两个分量字段 · `consensus` 为极化后最终值
+- `consensus_formula` 诊断 dict 新增 `score_weight` / `vote_weight` / `polarize_k` / `score_mean` / `vote_weighted` / `consensus_raw` / `consensus_final`
+- `assemble_report.py::render_school_scores` 卡片下方显示"流派分 X.X · 实分均值 · 投票共识" · hover tip 带全分量
+- `lib/self_review.py::check_consensus_formula_sanity` 版本校验放宽 · 支持 v2.9.1 / v2.11 / v2.15.5
+
+### 回归测试
+
+- `tests/test_v2_15_4_school_scores.py` 升级为 9 tests · 含混合公式数学 + 极化边界 + 分量字段 · 全过 ✅
+- `tests/test_v2_11_scoring_calibration.py::test_consensus_formula_version_label_v2_11` 更新接受 v2.15.5
+- 总套件 253 tests 全过
+
+---
+
+## v2.15.4 — 2026-04-22 (按流派打分 · 7 大学派各自评分)
+
+> **用户反馈**："打分系统我觉得可能还要优化一下，我们现在有几个流派，那么除了有一个最终分数，还要有不同流派各自给出的分数"
+
+### 新功能 · 按流派评分 (school_scores)
+
+以前 `panel.json` 只有一个 `panel_consensus` 总分 · 51 位评委的分歧被聚合掉看不出来. v2.15.4 起每一次跑都会产出 **7 大流派各自的 consensus / avg_score / verdict**:
+
+| 流派 | 代表人物 | 成员数 |
+|---|---|---|
+| A 经典价值派 | 巴菲特 / 格雷厄姆 / 费雪 / 芒格 | 6 |
+| B 成长派 | 彼得林奇 / 欧奈尔 / 蒂尔 / 伍德 | 4 |
+| C 宏观派 | 索罗斯 / 达里奥 / 马克斯 | 5 |
+| D 技术派 | 利弗莫尔 / Minervini / 达瓦斯 | 4 |
+| E 中式价投 | 段永平 / 张坤 / 朱少醒 / 冯柳 | 6 |
+| F A 股游资 | 章盟主 / 孙哥 / 赵老哥…… | 23 |
+| G 量化派 | Simons / Thorp / Shaw | 3 |
+
+**实测示例（002217 · 中密控股）**：
+
+| 流派 | 共识度 | 均分 | 判定 | 信号分布 |
+|---|---|---|---|---|
+| 经典价值派 | 40.0 | 37.3 | 谨慎 | 0📈 4⚖️ 2📉 |
+| 成长派 | 25.0 | 36.5 | 回避 | 1📈 0⚖️ 3📉 |
+| **宏观派** | **68.0** | 60.8 | **买入** | 1📈 4⚖️ 0📉 |
+| 技术派 | 40.0 | 41.2 | 谨慎 | 1📈 1⚖️ 2📉 |
+| 中式价投 | 30.0 | 36.5 | 回避 | 0📈 3⚖️ 3📉 |
+| A 股游资 | 51.0 | 42.0 | 关注 | 0📈 17⚖️ 3📉 |
+| 量化派 | 50.0 | 61.0 | 关注 | 1📈 0⚖️ 1📉 |
+
+一眼可见：**宏观派买入 vs 成长派回避**分歧 43 分 · 说明这只票属"宏观友好但成长性不足"的结构性矛盾票 · 以前只看总分 45.5 "谨慎"看不出来.
+
+### 实现
+
+- `run_real_test.py::generate_panel` 末尾新增 `school_scores` dict · 每个流派用和总盘一致的 `(bullish + 0.6*neutral)/active * 100` 公式
+- `_consensus_to_verdict` 阈值与综合分保持对齐（80 重仓 / 65 买入 / 50 关注 / 35 谨慎 / else 回避）
+- `synthesis.json` 同步携带 `school_scores` · 报告层无须回拉 panel.json
+- `assemble_report.py::render_school_scores` 渲染 7 卡片网格 · 配色按 verdict 语义
+- `assets/report-template.html` 新增 `<!-- INJECT_SCHOOL_SCORES -->` 锚点
+
+### 回归测试
+
+新增 `tests/test_v2_15_4_school_scores.py`（7 tests）· 全部过 ✅
+总套件 251 tests 仍 100% 通过.
+
+---
+
 ## v2.15.3 — 2026-04-21 (fetch_capital_flow 严重性能 bug hotfix)
 
 > **用户反馈**："数据源这一块还是很不稳定，请你检查好" · 审计发现最严重的 bug 在 fetch_capital_flow.

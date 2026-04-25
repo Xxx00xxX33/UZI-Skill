@@ -7,6 +7,117 @@
 
 ---
 
+## v3.2.0 (2026-04-23 · assemble_report.py 拆分 80%)
+
+### REFACTOR · assemble_report.py 从 2964 → 587 行
+- **症状**：v2.15.x 多个 hotfix（fund / moat / school_scores）都落在 assemble_report.py · 68 函数单文件耦合严重
+- **位置**：`assemble_report.py` · 新增 `lib/report/` 5 个子模块
+- **根因**：所有 render 相关代码堆一个文件 · 改 fund_managers 的人可能不小心碰到 dim_viz 的 SVG · 2964 行导致定位困难
+- **修法**（4 次 commit 物理拆分）：
+  1. `svg_primitives.py` (602 行) · 19 个 svg_* + 9 个 COLOR_* · 纯渲染无业务
+  2. `dim_viz.py` (742 行) · 19 个 _viz_xxx + DIM_VIZ_RENDERERS dispatch
+  3. `institutional.py` (532 行) · DCF/LBO/IC/catalyst/competitive/style_chip
+  4. `panel_cards.py` (183) + `special_cards.py` (544 行) · 51 评委相关 + 特殊卡
+- **验证**：332 tests 全过 · 002217 assemble() 0.0s 出 608KB HTML · 格式 byte-level 一致
+- **回归测试**：4 处 grep 式 test 扩展为拼接 assemble_report + 对应子模块源码
+- **未来改该区域注意事项**：
+  - 新增 render 函数要选对目标文件：`svg_xxx` → svg_primitives · `_viz_xxx` → dim_viz · `render_dim_card` 核心 → assemble_report · panel 相关 → panel_cards · 深度卡片 → special_cards · 机构建模 → institutional
+  - assemble_report.py 对所有抽离函数做 re-export · 改 API 时保持 re-export 完整否则外部调用崩
+  - 循环依赖：每个子模块都重新定义 `_safe` 避免 import assemble_report（防止循环）
+  - grep 式测试脆弱 · 再拆模块时记得扩展 src 拼接列表
+  - `DIM_META` / `CAT_GROUPS` 仍在 assemble_report · 因为 render_dim_card 依赖它们
+
+---
+
+## v3.1.0 (2026-04-23 · rrt 瘦身 65% · 纯函数 + preflight 抽离)
+
+### REFACTOR · run_real_test.py 从 2105 → 735 行
+- **症状**：v2.x 连续 5 个 hotfix 都落在 rrt 屎山里 · 函数互相耦合 · 改动困难
+- **位置**：`run_real_test.py` · `lib/pipeline/score_fns.py`（新）· `lib/pipeline/preflight_helpers.py`（新）
+- **根因**：rrt 同时承担 collect + scoring 纯函数 + stage1/stage2 CLI 编排 · 职责混杂 · 2105 行单文件
+- **影响**：改任何一处需要扫全文件找依赖 · 测试 grep 式脆弱 · v3.0 发完仍有这个债
+- **修法**（2 步物理搬迁）：
+  1. 搬 1228 行纯函数到 `score_fns.py` · rrt 做 re-export 保持兼容
+  2. 搬 166 行 preflight/resolve/ETF 到 `preflight_helpers.py` · stage1 改调 `prepare_target()`
+- **验证**：332 tests 全过 · 002217 resume e2e 10s 出报告 · 格式 100% 兼容
+- **回归测试**：18 处 grep 式测试批量 patch 读 rrt + score_fns + preflight_helpers 三文件拼接
+- **未来改该区域注意事项**：
+  - 纯函数的 canonical 位置现在是 `score_fns.py` · rrt 只做 re-export · 新函数添加走 score_fns
+  - preflight 任何新增检查都加到 `prepare_target()` · 不要回到 stage1 里堆逻辑
+  - `collect_raw_data` 仍在 rrt（283 行）· legacy stage1 还用它 · 新 collector 是 `pipeline/collect.py`
+  - 如果 stage1 签名变化（加/减参数）· 需同步 `preflight_helpers.prepare_target` 参数
+  - grep 式测试（`(X / "run_real_test.py").read_text()`）脆弱 · 如果再搬函数记得扩展测试的文件列表
+
+---
+
+## v3.0.0 (2026-04-23 · pipeline 架构默认启用 + Phase 6c 解耦)
+
+### REFACTOR · pipeline 成为主干 · legacy 转作 fallback
+- **症状**：v2.x 连续 5 个 hotfix 都落在 assemble_report.py (2964 行) + run_real_test.py (2105 行) 两个巨文件 · 屎山深重
+- **位置**：`run.py::main`（默认路径切换）+ `lib/pipeline/score.py`（Phase 6c 解耦）+ `lib/pipeline/run.py`（pipeline 编排）
+- **根因**：v2.15.x 的 Phase 6a delegate 模式下 `pipeline.score_from_cache` 直接调 `rrt.stage1(ticker)` · 但 stage1 内部会重新跑 22 fetcher collect · 和 pipeline 刚做完的 collect 重复 · 每股多耗 5-10 分钟
+- **影响**：pipeline dark-launch 两周下来 opt-in 用户反馈"比 legacy 慢" · 原因是重复 collect
+- **修法**（3 步）：
+  1. `pipeline/score.py::score_from_cache` 改为调 rrt 纯函数（`score_dimensions` / `generate_panel` / `generate_synthesis` / `_autofill_qualitative_via_mx`）· 不再调 `stage1`
+  2. `pipeline/run.py::run_pipeline` 加 `_preflight_guards(ticker)` · 中文名 / ETF / LOF / 可转债 → 抛 `ValueError` 让 run.py fallback legacy（legacy 有完整交互）
+  3. `run.py::main` 默认走 pipeline · `UZI_LEGACY=1` 强制走老路径 · pipeline 异常自动 fallback · 附 traceback
+- **验证**：002217 resume 模式 `run_pipeline` 46.9s 出报告 · 以前约 120s+（score_from_cache 从 180s → 10.6s）
+- **回归测试**：332 tests 全过（253 legacy + 79 pipeline）· 含 score/synthesize/collect/run_pipeline 的模块单测
+- **未来改该区域注意事项**：
+  - `pipeline.score_from_cache` 依赖 rrt 的 4 个函数签名 · 任何一个签名变 · pipeline 同步改（现状：`score_dimensions(raw)` / `generate_panel(dims_scored, raw)` / `generate_synthesis(raw, dims_scored, panel, agent_analysis=None)` / `_autofill_qualitative_via_mx(raw, ticker)`）
+  - `pipeline/synthesize.py` 仍是 delegate · 调 `rrt.stage2(ticker)` · stage2 只读 cache 不 collect · 安全（改 stage2 时注意保持"只读 cache"原则）
+  - `_preflight_guards` 里的异常类型必须是 `ValueError` · 其他异常 run.py 不会 fallback（视为 crash）
+  - 如果 legacy 某个纯函数名变（如 `generate_panel` → `build_panel`）· pipeline/score.py 必须同步改 · 否则 AttributeError
+  - `UZI_LEGACY=1` 是保险开关 · 绝不删 · 出问题时用户能临时回退
+
+---
+
+## v2.15.5 (2026-04-23 · 评分聚集在一个区间 · 区分度不足)
+
+### BUG · consensus 公式把连续分压成三分类 + 规则严苛导致结构性居中
+- **症状**：用户反馈"现在评分大多数都在一个区间内徘徊" · 采 7 股数据 consensus 聚集 40-55 · 流派间分歧 stdev 常 < 15
+- **位置**：`run_real_test.py::generate_panel`（v2.11 原公式）+ `lib/investor_evaluator.py:69`（BULLISH_THRESHOLD=65 / BEARISH_THRESHOLD=35）
+- **根因 1（最主要）**：v2.11 公式 `(bullish + 0.6*neutral)/active*100` 只看 signal 计数 · 单 investor score 虽然 stdev=30 信息丰富 · 但被压成 3 分类后"打 55 分"和"打 40 分"一样算 neutral 贡献 · 程度丢失
+- **根因 2**：A 成长派规则严苛 · 平均 score 35 · D 技术派 51 · G 量化 58 · 跨流派结构性偏差 20 分
+- **影响**：7 流派 consensus 分布挤在 30-55 区间 · 用户看不出"宏观派买入 vs 价值派回避"这种真正的分歧信号
+- **修法**（3 步）：
+  1. `generate_panel` 引入 `SCORE_WEIGHT=0.65 + VOTE_WEIGHT=0.35` 混合公式 · `raw = 0.65*score_mean + 0.35*vote_weighted`
+  2. 加 `_polarize(c, k=1.3)` helper · `final = clip(50 + (raw-50)*1.3, 0, 100)` · 以 50 为中心把两端拉开
+  3. 总盘 + `school_scores` 每个流派同步升级 · 新增 `score_mean` / `vote_consensus` 分量字段让用户看到"实分 vs 投票"的拆解
+- **验证**：
+  - 002217 F 游资 51→43.7（vote 机制高估修正·实分 42）· G 量化 50→59.3（实分 61 低估修正）
+  - 总盘 range 从 62 → 68 分（两端更极端）
+  - 7 股样本没有再聚集 40-55 区间
+- **回归测试**：`tests/test_v2_15_4_school_scores.py`（9 tests · 含 `test_mixed_formula_polarizes_extremes` 校验数学 · `test_consensus_formula_in_panel_has_mixed_components` 守护常量）
+- **未来改该区域注意事项**：
+  - `SCORE_WEIGHT + VOTE_WEIGHT` 必须 == 1.0 · 否则 raw 会偏置
+  - `POLARIZE_K` 调大（>1.5）会让 consensus 容易贴 0/100 · 不建议 · 想进一步拉开优先改 BULLISH_THRESHOLD
+  - 若修改 `NEUTRAL_WEIGHT`（0.6→其他）· 必须同步 `stock_style.py::apply_style_weights` 里的 `neutral_w += w * 0.6`（v2.11 耦合）
+  - `_polarize` 对 50 分不变 · 如果改变中心点需要同步更新 `_consensus_to_verdict` 阈值
+  - 新增流派时 `school_scores` 聚合会自动处理 · 但 `GROUP_META` 要同步加 label + desc
+
+---
+
+## v2.15.4 (2026-04-22 · panel 只有总分看不到流派分歧)
+
+### FEATURE · 按流派打分 (school_scores)
+- **症状**：用户"打分系统我觉得可能还要优化一下，我们现在有几个流派，那么除了有一个最终分数，还要有不同流派各自给出的分数"· 51 位评委的分歧被聚合掉看不出来
+- **位置**：`run_real_test.py::generate_panel`（~line 740）+ `assemble_report.py::render_school_scores` + `assets/report-template.html`
+- **根因**：原设计只有一个 `panel_consensus` / `vote_distribution` / `signal_distribution` · 没有按 investor.group 分组聚合
+- **影响**：结构性矛盾票（譬如宏观友好但成长性差）看总分只是中性 · 用户无法快速判断到底是"共识中性"还是"各派互相抵消"
+- **修法**（3 改动）：
+  1. `generate_panel` 末尾加 `by_group` 聚合 · 每个流派用和总盘一致的 `(bullish + 0.6*neutral)/active * 100` 公式生成 consensus · active 成员 score 均值生成 avg_score · `_consensus_to_verdict` 阈值 80/65/50/35 与综合分对齐
+  2. `synthesis.json` 携带 `school_scores` · 报告层无须回拉 panel.json
+  3. `render_school_scores` 渲染 7 卡片网格（配色按 verdict 语义）· 注入 `<!-- INJECT_SCHOOL_SCORES -->` 锚点
+- **验证**：002217 · 宏观派 68 买入 vs 成长派 25 回避 · 分歧 43 分可见 · 总分 45.5 单看无法识别
+- **回归测试**：`tests/test_v2_15_4_school_scores.py`（7 tests · 聚合数学 / 阈值一致 / 模板锚点 / render 函数 / 空数据兜底）
+- **未来改该区域注意事项**：
+  - 如果修改 `NEUTRAL_WEIGHT` 或 consensus 公式 · 必须同步改 `generate_panel` 下面的流派聚合段 · 两处必须保持公式一致
+  - 如果新增/删除 investor · 需确认其 `group` 字段在 A-G 范围 · 否则 `school_scores` 会出现 `?` key
+  - 如果改 verdict 阈值（如 65→70）· 必须同步 `_consensus_to_verdict` 和 overall 的 `verdict_label` 两处
+
+---
+
 ## v2.15.3 (2026-04-21 · fetch_capital_flow 严重性能 bug)
 
 ### BUG · 每股重抓全 A 大宗/解禁/融资数据（3+ min/股）

@@ -12,7 +12,7 @@
 [![Methods](https://img.shields.io/badge/Institutional%20Methods-17-red)]()
 [![Self-Review](https://img.shields.io/badge/Self--Review-13%20checks-blueviolet)](skills/deep-analysis/scripts/lib/self_review.py)
 
-A 股 / 港股 / 美股 · 个股深度分析引擎 · **v2.15.3 capital_flow universe cache 性能 100x + v2.15.2 Gemini/网络自检 + v2.15.0 YAML persona**
+A 股 / 港股 / 美股 · 个股深度分析引擎 · **v3.2.0 assemble_report 瘦身 -80% · v3.1.0 run_real_test 瘦身 -65% · v3.0.0 pipeline 架构默认启用**
 
 [安装](#安装) · [用法](#用法) · [三档深度](#-三档思考深度v2103-新增) · [Hermes 🆕](INSTALL-HERMES.md) · [评审团](#-51-位评审团) · [机构方法](#-17-种机构级方法) · [自查 gate](#-机械级自查-gatev29-起) · [报告截图](#-报告长什么样) · [FAQ](#-faq) · [入群交流测试](#-测试交流群) · [Contributors](CONTRIBUTORS.md)
 
@@ -45,7 +45,14 @@ A 股 / 港股 / 美股 · 个股深度分析引擎 · **v2.15.3 capital_flow un
 /stock-deep-analyzer:dcf 600519                ← DCF 估值专项
 ```
 
-> 💡 **当前最新稳定版 v2.15.3**：性能大幅优化（基金持仓/北向/解禁相关维度 **~100x 加速**）· 跑一只票 5 min 内出完整 Bloomberg 风格报告 · 全免费数据源 · 零 API key · A 股直接能跑。
+> 💡 **当前最新稳定版 v3.2.0**（架构大重构 · 业务零区别）：
+> - **v3.0.0** · pipeline 架构默认启用（`python run.py <ticker>` 默认走新路径 · `UZI_LEGACY=1` 回老路径）
+> - **v3.1.0** · `run_real_test.py` 2105 → 735 行（-65%）· 1228 行纯函数迁到 `lib/pipeline/score_fns.py`
+> - **v3.2.0** · `assemble_report.py` 2964 → 587 行（-80%）· 拆 5 个 `lib/report/*.py` 子模块
+>
+> 两个巨文件合计 **5069 → 1322 行 (-74%)** · 332 tests 全过 · 真机 e2e 002217 resume 10s 出报告 · v2.x 所有 API 100% 向后兼容.
+>
+> v2.15 系列继续保留：capital_flow universe cache（100x 加速）· school_scores 按流派打分 · 混合公式 + 极化拉伸.
 
 ---
 
@@ -55,7 +62,7 @@ A 股 / 港股 / 美股 · 个股深度分析引擎 · **v2.15.3 capital_flow un
 当前版本还不太稳定，论坛反馈 bug 比较多。如果你有兴趣帮忙更快地测试效果，或者想交流使用中的问题和建议，欢迎扫码进群与我沟通（主要是帮我测试 ✌️），如果你想体验最新效果，可以切换到develop分支～
 
 <p align="center">
-  <img src="docs/screenshots/mmqrcode1776619933600.png" width="300" alt="微信群二维码" />
+  <img src="docs/screenshots/b8869535930c6e362545990e98f24890.jpg" width="300" alt="微信群二维码" />
 </p>
 
 > 二维码会定期过期，如果扫码失败请提 Issue 或在论坛留言，我会更新。
@@ -540,39 +547,69 @@ python run.py 贵州茅台
 
 ---
 
-## 📁 项目结构
+## 📁 项目结构（v3.2.0 架构）
 
 ```
 UZI-Skill/
-├── .claude-plugin/
-│   ├── plugin.json              # 插件清单
-│   └── marketplace.json         # Marketplace 配置
-├── commands/                    # 14 个 slash commands
+├── run.py                              # ✅ 用户入口 (python run.py <ticker>)
+├── AGENTS.md / CLAUDE.md / CODEX.md    # agent 指令 (v3.2 新增 CODEX.md)
+├── GEMINI.md                           # Gemini CLI 指引
+├── RELEASE-NOTES.md                    # 完整版本日志
+├── docs/BUGS-LOG.md                    # bug 登记 + 防回归清单
+├── .claude-plugin/plugin.json          # Claude Code manifest
+├── .cursor-plugin/plugin.json          # Cursor manifest
+├── gemini-extension.json               # Gemini manifest
+├── commands/                           # 14 个 slash commands
+├── personas/                           # 51 个 YAML persona (v2.15.0)
 ├── skills/
-│   ├── deep-analysis/           # ★ 主工作流 (6 Task)
-│   │   ├── SKILL.md             # Claude 分析师手册
-│   │   ├── references/          # 方法论文档 (8 篇)
-│   │   ├── assets/              # HTML 模板 + 51 张头像
-│   │   └── scripts/
-│   │       ├── lib/             # 15 个核心模块
-│   │       │   ├── fin_models.py         # DCF/Comps/LBO/3-Stmt/Merger
-│   │       │   ├── research_workflow.py  # 7 种研究产物
-│   │       │   ├── deep_analysis_methods.py # 6 种 PE/IB/WM 方法
-│   │       │   ├── investor_criteria.py  # 51人 × 180 条规则
-│   │       │   ├── investor_evaluator.py # 规则引擎
-│   │       │   ├── stock_features.py     # 108 标准化特征
-│   │       │   └── ...
-│   │       ├── fetch_*.py       # 22 个维度 fetcher
-│   │       ├── compute_deep_methods.py  # 机构建模计算
-│   │       ├── assemble_report.py       # HTML 装配
-│   │       └── run_real_test.py         # 主流水线
-│   ├── investor-panel/          # 评审团 skill
-│   ├── lhb-analyzer/            # 龙虎榜 skill
-│   └── trap-detector/           # 杀猪盘 skill
+│   ├── deep-analysis/                  # ★ 主 skill (股票分析)
+│   │   ├── SKILL.md
+│   │   ├── references/                 # 方法论文档
+│   │   ├── assets/                     # HTML 模板 + 51 头像 svg
+│   │   └── scripts/                    # ← 所有 Python 业务代码
+│   │       ├── run_real_test.py        # legacy stage1/stage2 (v3.1 瘦身 735 行)
+│   │       ├── assemble_report.py      # HTML shell (v3.2 瘦身 587 行)
+│   │       ├── fetch_*.py              # 22 fetcher · 也是独立 CLI
+│   │       ├── compute_deep_methods.py # 机构建模
+│   │       ├── tests/                  # 332 pytest
+│   │       └── lib/
+│   │           ├── pipeline/           # 🆕 v3.0 管道式架构（默认路径）
+│   │           │   ├── run.py          # run_pipeline 编排入口
+│   │           │   ├── collect.py      # 并发 collector (22 adapter)
+│   │           │   ├── score.py        # scoring 段（调 rrt 纯函数）
+│   │           │   ├── synthesize.py   # stage2 薄 wrapper
+│   │           │   ├── score_fns.py    # 🆕 v3.1 · 1228 行纯函数
+│   │           │   ├── preflight_helpers.py  # 🆕 v3.1 · 网络/ticker preflight
+│   │           │   ├── fetchers/registry.py  # 22 adapter 工厂
+│   │           │   └── renderer/       # 21 个 renderer stub
+│   │           ├── report/             # 🆕 v3.2 · assemble_report 拆分
+│   │           │   ├── svg_primitives.py     # 19 svg_* + COLOR_*
+│   │           │   ├── dim_viz.py            # 19 _viz_xxx + DIM_VIZ_RENDERERS
+│   │           │   ├── institutional.py      # DCF/LBO/IC/catalyst/competitive
+│   │           │   ├── panel_cards.py        # 51 评委 panel
+│   │           │   └── special_cards.py      # fund/insights/school_scores
+│   │           ├── investor_criteria.py      # 51 人 × 180 规则
+│   │           ├── investor_evaluator.py     # 规则引擎
+│   │           ├── stock_features.py         # 108 标准化特征
+│   │           ├── playwright_fallback.py    # v2.13 兜底
+│   │           ├── self_review.py            # 机械自查 13 check
+│   │           └── ...                       # 其他 lib 模块
+│   ├── investor-panel/                 # 评审团 skill
+│   ├── lhb-analyzer/                   # 龙虎榜 skill
+│   └── trap-detector/                  # 杀猪盘 skill
 ├── requirements.txt
-├── LICENSE
-└── README.md
+└── LICENSE
 ```
+
+**v3.2 重构分层亮点**：
+
+| 层 | 文件 | 职责 |
+|---|---|---|
+| 入口 | `run.py` | CLI 主入口 · `UZI_LEGACY=1` 回退老路径 |
+| 管道 | `lib/pipeline/*` | v3.0 主干 · collect / score / synthesize |
+| 纯函数 | `lib/pipeline/score_fns.py` | v3.1 · score_dimensions / generate_panel / generate_synthesis |
+| 渲染 | `lib/report/*` | v3.2 · 5 个子模块 · svg / viz / inst / panel / special |
+| Legacy | `run_real_test.py` + `assemble_report.py` | v2.x 向后兼容层 · re-export 所有迁移函数 |
 
 ---
 
@@ -676,6 +713,11 @@ python run.py <ticker> --no-resume
 
 | 版本 | 日期 | 主要变化 |
 |---|---|---|
+| **v3.2.0** | 2026-04-23 | **assemble_report.py 深度拆分 (-80%)**：2964 → 587 行 · 拆 5 个子模块 `lib/report/svg_primitives` (602) / `dim_viz` (742) / `institutional` (532) / `panel_cards` (183) / `special_cards` (544)。v2.x 所有 API 保持 re-export · 332 tests 全过 · e2e 零差异 · 加 `CODEX.md` + `AGENTS.md::Repository Layout` 给 codex 准确入口指引 |
+| **v3.1.0** | 2026-04-23 | **run_real_test.py 瘦身 65%**：2105 → 735 行。1228 行纯函数 (`_f/score_dimensions/generate_panel/generate_synthesis/_autofill_qualitative_via_mx`) → `lib/pipeline/score_fns.py`；166 行 preflight/resolve/ETF guard → `lib/pipeline/preflight_helpers.py::prepare_target()`。rrt 做 re-export 保持完整向后兼容 · 332 tests 全过 · 002217 resume 10s 出报告 |
+| **v3.0.0** | 2026-04-23 | **pipeline 架构默认启用**：`python run.py <ticker>` 默认走 `pipeline.run_pipeline` · `UZI_LEGACY=1` 强制回老路径 · pipeline 异常自动 fallback。Phase 6c 解耦：`pipeline.score` 直接调 rrt 纯函数（不再走 stage1 重复 collect）· 002217 score_from_cache 从 180s → 10.6s。Pipeline 预检 guards (中文名 / ETF / LOF / 可转债 → fallback legacy) |
+| **v2.15.5** | 2026-04-23 | **评分公式重校准**：`panel_consensus` 从单一 vote 公式升级为混合公式 `0.65*score_mean + 0.35*vote_weighted` + 极化拉伸 (k=1.3) · 解决"大多数分在一个区间徘徊"问题 · 7 流派 consensus 分歧更清晰 · 002217 F 游资 51→43.7（vote 高估修正）· G 量化 50→59.3（实分低估修正） |
+| **v2.15.4** | 2026-04-22 | **按流派打分 school_scores**：7 大流派 (A 价值 / B 成长 / C 宏观 / D 技术 / E 中式 / F 游资 / G 量化) 各自产出 consensus/avg_score/verdict · 报告新增"SCHOOL SCORES"卡片 · 同一只票可见不同哲学的分歧（宏观派买入 vs 成长派回避） |
 | **v2.15.3** | 2026-04-21 | **性能 hotfix** · fetch_capital_flow 每股重抓全 A 大宗/解禁/融资数据集 → 每股 3+ min · 新增 `_universe_*()` 4 个 helper + `cached("_universe", ...)` 24h TTL · 全股共享 · 二次跑 universe 部分 0.01s（**100+ 倍加速**）· 6 专项测试 |
 | **v2.15.2** | 2026-04-21 | **GitHub issue hotfix**：#36 Gemini CLI 安装报错（gemini-extension.json 加 version + 纳入 version-bump）· #30 网络自检增强（Clash 本地代理端口侦测 + 数据源分组诊断 + 多行修复建议 · 写进 `.cache/_global/network_profile.json` 供 agent 读）· 10 专项测试 |
 | **v2.15.1** | 2026-04-20 | **报告质量 2 bug hotfix**（实测 300470 发现）· Bug 1: fund-card 一堆 "5Y +0.0%" 假数据 · 修 `_build_row_full` + `render_fund_managers` 让 lite 行降级 · Bug 2: 14_moat 护城河被贵州茅台数据污染（DDGS 对生僻公司返超级股票结果）· 加 `_SUPERSTAR_POLLUTERS` 过滤 · 11 专项测试 |

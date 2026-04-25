@@ -118,8 +118,13 @@ def test_render_no_zero_percent_card():
 
 
 def test_initial_show_is_dynamic():
-    """INITIAL_SHOW 现在 = full_count · 不再是固定 6."""
-    src = (SCRIPTS / "assemble_report.py").read_text(encoding="utf-8")
+    """INITIAL_SHOW 现在 = full_count · 不再是固定 6.
+
+    v3.2 · render_fund_managers 搬到 lib/report/special_cards.py · grep 拼接."""
+    src = (
+        (SCRIPTS / "assemble_report.py").read_text(encoding="utf-8")
+        + "\n" + (SCRIPTS / "lib" / "report" / "special_cards.py").read_text(encoding="utf-8")
+    )
     assert "INITIAL_SHOW = min(6, len(cards))" in src, "INITIAL_SHOW 必须是 min(6, len(cards)) 动态"
     assert "lite_managers = [m for m in managers_sorted" in src
 

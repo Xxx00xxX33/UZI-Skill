@@ -499,28 +499,31 @@ def check_factcheck_redflags(ctx: dict) -> list[Issue]:
 # ═══════════════════════════════════════════════════════════════
 
 def check_consensus_formula_sanity(ctx: dict) -> list[Issue]:
-    """v2.9.1 · panel_consensus 使用正确的半权 neutral 公式"""
+    """v2.15.5 · panel_consensus 使用混合公式（0.65*score + 0.35*vote, 极化 k=1.3）"""
     issues = []
     panel = ctx.get("panel") or {}
     cf = panel.get("consensus_formula") or {}
     cons = panel.get("panel_consensus", -1)
     if cons < 0: return issues
-    # 如果 panel 里有 consensus_formula 但 version 不是 v2.9.1+，可能是老 panel.json
+    # 支持 v2.9.1 / v2.11 / v2.15.5 · 更早版本才警告
     version = cf.get("version", "")
-    if cf and "v2.9.1" not in version and "bullish + 0.5" not in version:
+    is_current = any(tag in version for tag in ("v2.15.5", "v2.11", "v2.9.1", "bullish + 0.5", "polarize"))
+    if cf and not is_current:
         issues.append(Issue(
             severity="warning", category="panel", dim="panel",
-            issue="consensus_formula 不是 v2.9.1 半权公式，可能是旧 cache",
+            issue="consensus_formula 不是 v2.15.5 混合公式，可能是旧 cache",
             evidence=f"version={version!r}",
             suggested_fix="清 cache 重跑或直接 stage2() 重新合成",
         ))
-    # bullish=0 但 consensus > 20% 必然公式错
+    # v2.15.5 · 极化后公式：score_mean 参与 · bullish=0 但 score_mean 高时 consensus 可 > 20 · 不再硬判
+    # 改为：bullish=0 且 score_mean < 30 但 consensus > 30 才判错
     sig = panel.get("signal_distribution") or {}
-    if sig.get("bullish", 0) == 0 and cons > 20:
+    sm = cf.get("score_mean", 50)
+    if sig.get("bullish", 0) == 0 and sm < 30 and cons > 30:
         issues.append(Issue(
             severity="critical", category="panel", dim="panel",
-            issue="panel_consensus 公式异常：bullish=0 但 consensus > 20%",
-            evidence=f"consensus={cons}, bullish={sig.get('bullish', 0)}, neutral={sig.get('neutral', 0)}",
+            issue="panel_consensus 公式异常：bullish=0 且 score_mean<30 但 consensus>30",
+            evidence=f"consensus={cons}, bullish={sig.get('bullish', 0)}, neutral={sig.get('neutral', 0)}, score_mean={sm}",
             suggested_fix="检查 generate_panel 的 consensus 公式",
         ))
     return issues

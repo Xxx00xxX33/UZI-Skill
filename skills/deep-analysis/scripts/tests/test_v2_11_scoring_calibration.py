@@ -36,7 +36,7 @@ def _verdict_for(overall: float) -> str:
 
 def test_verdict_thresholds_are_v2_11_calibrated():
     """Ensure run_real_test.py uses new thresholds, not old 85/70/55/40."""
-    src = (ROOT / "run_real_test.py").read_text(encoding="utf-8")
+    src = (((ROOT / "run_real_test.py").read_text(encoding="utf-8")) + "\n" + (ROOT / "lib" / "pipeline" / "score_fns.py").read_text(encoding="utf-8"))
     # New thresholds must be present
     assert "overall >= 80" in src, "值得重仓 threshold should be 80 (was 85)"
     assert "overall >= 65" in src, "可以蹲一蹲 threshold should be 65 (was 70)"
@@ -93,7 +93,7 @@ def test_maotai_simulated_score_now_gives_kan_dan_dan():
 
 def test_consensus_formula_uses_v2_11_neutral_weight():
     """generate_panel must use 0.6 neutral weight (not 0.5)."""
-    src = (ROOT / "run_real_test.py").read_text(encoding="utf-8")
+    src = (((ROOT / "run_real_test.py").read_text(encoding="utf-8")) + "\n" + (ROOT / "lib" / "pipeline" / "score_fns.py").read_text(encoding="utf-8"))
     # Look for the calibration signal — NEUTRAL_WEIGHT = 0.6
     assert "NEUTRAL_WEIGHT = 0.6" in src, "NEUTRAL_WEIGHT constant missing"
     assert "v2.11" in src and "neutral" in src.lower(), "v2.11 calibration comment missing"
@@ -108,9 +108,15 @@ def test_stock_style_apply_weights_uses_0_6():
 
 
 def test_consensus_formula_version_label_v2_11():
-    """panel.json consensus_formula.version must advertise v2.11 for downstream agents."""
-    src = (ROOT / "run_real_test.py").read_text(encoding="utf-8")
-    assert '"version": "v2.11' in src, "consensus_formula version label must be v2.11"
+    """panel.json consensus_formula.version must advertise v2.11 or later.
+
+    v2.15.5 升级到混合公式（0.65*score + 0.35*vote, polarize k=1.3）·
+    但保留 NEUTRAL_WEIGHT=0.6 · v2.11 投票机制是混合公式的一部分分量.
+    """
+    src = (((ROOT / "run_real_test.py").read_text(encoding="utf-8")) + "\n" + (ROOT / "lib" / "pipeline" / "score_fns.py").read_text(encoding="utf-8"))
+    # 接受 v2.11 或 v2.15.5（当前）或任何后续升级
+    assert any(tag in src for tag in ('"version": "v2.11', '"version": "v2.15.5')), \
+        "consensus_formula version label must be v2.11 or v2.15.5 (mixed)"
 
 
 # ─── Sanity: end-to-end math ───
