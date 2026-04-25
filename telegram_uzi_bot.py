@@ -70,6 +70,12 @@ def env_flag(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def redact_secret(text: str, secret: str) -> str:
+    if not secret:
+        return text
+    return text.replace(secret, "<redacted>")
+
+
 def parse_group_id(raw: str) -> int:
     return int(raw.strip())
 
@@ -313,14 +319,27 @@ class UziTelegramBot:
             if method == "getUpdates"
             else DEFAULT_API_TIMEOUT
         )
-        response = self.session.post(
-            f"{self.base_url}/{method}", params=params, json=json_body, timeout=timeout
-        )
-        response.raise_for_status()
+        try:
+            response = self.session.post(
+                f"{self.base_url}/{method}",
+                params=params,
+                json=json_body,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            safe_error = self._redact(str(exc))
+            raise RuntimeError(
+                f"Telegram API {method} HTTP error: {safe_error}"
+            ) from exc
         payload = response.json()
         if not payload.get("ok"):
-            raise RuntimeError(f"Telegram API {method} failed: {payload}")
+            safe_payload = self._redact(json.dumps(payload, ensure_ascii=False))
+            raise RuntimeError(f"Telegram API {method} failed: {safe_payload}")
         return payload["result"]
+
+    def _redact(self, text: str) -> str:
+        return redact_secret(text, getattr(self, "token", ""))
 
     def _get_me(self) -> dict[str, Any]:
         return self._api("getMe")
@@ -365,7 +384,7 @@ class UziTelegramBot:
             )
         except Exception as exc:
             print(
-                f"send_message failed for chat {chat_id}: {type(exc).__name__}: {exc}",
+                f"send_message failed for chat {chat_id}: {type(exc).__name__}: {self._redact(str(exc))}",
                 file=sys.stderr,
                 flush=True,
             )
@@ -408,11 +427,11 @@ class UziTelegramBot:
         if self.httpd is None:
             handler = partial(PublicReportHandler, directory=str(self.public_dir))
             try:
-                self.httpd = ThreadingHTTPServer(("0.0.0.0", self.port), handler)
+                self.httpd = ThreadingHTTPServer(("127.0.0.1", self.port), handler)
             except OSError as exc:
                 if exc.errno != 98 or self.port == 0:
                     raise
-                self.httpd = ThreadingHTTPServer(("0.0.0.0", 0), handler)
+                self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
             self.port = int(self.httpd.server_address[1])
             thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
             thread.start()
@@ -446,6 +465,17 @@ class UziTelegramBot:
                 public_url = match.group(1)
                 break
         if not public_url:
+            if self.tunnel_proc is not None and self.tunnel_proc.poll() is None:
+                self.tunnel_proc.terminate()
+                try:
+                    self.tunnel_proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    self.tunnel_proc.kill()
+            self.tunnel_proc = None
+            if self.httpd is not None:
+                self.httpd.shutdown()
+                self.httpd.server_close()
+                self.httpd = None
             raise RuntimeError("cloudflared tunnel did not return a public URL")
         self.public_base_url = public_url
 
@@ -473,11 +503,18 @@ class UziTelegramBot:
 
     def run_uzi(self, query: str) -> Path:
         env = os.environ.copy()
+        for key in list(env):
+            if key.startswith("TELEGRAM_"):
+                env.pop(key, None)
         env["UZI_NO_UPDATE_CHECK"] = "1"
         if not self.include_bonus_fetchers:
-            env.setdefault("UZI_SKIP_BONUS_FETCHERS", "1")
+            env["UZI_SKIP_BONUS_FETCHERS"] = "1"
+        else:
+            env.pop("UZI_SKIP_BONUS_FETCHERS", None)
         if not self.render_extra_assets:
-            env.setdefault("UZI_STAGE2_SKIP_OPTIONAL_RENDERS", "1")
+            env["UZI_STAGE2_SKIP_OPTIONAL_RENDERS"] = "1"
+        else:
+            env.pop("UZI_STAGE2_SKIP_OPTIONAL_RENDERS", None)
         command = [
             str(self.python_bin),
             str(ROOT_DIR / "run.py"),
@@ -556,9 +593,10 @@ class UziTelegramBot:
                     message_thread_id=job.get("message_thread_id"),
                 )
             except Exception as exc:
+                safe_error = self._redact(str(exc))
                 self._safe_send_message(
                     job["chat_id"],
-                    f"生成 {job['query']} 报告失败：{type(exc).__name__}: {str(exc)[:700]}",
+                    f"生成 {job['query']} 报告失败：{type(exc).__name__}: {safe_error[:700]}",
                     reply_to_message_id=job["message_id"],
                     message_thread_id=job.get("message_thread_id"),
                 )
@@ -606,8 +644,9 @@ class UziTelegramBot:
                     self.poll_updates()
                     self.lease_store.cleanup()
                 except Exception as exc:
+                    safe_error = self._redact(str(exc))
                     print(
-                        f"poll_updates failed: {type(exc).__name__}: {exc}",
+                        f"poll_updates failed: {type(exc).__name__}: {safe_error}",
                         file=sys.stderr,
                         flush=True,
                     )

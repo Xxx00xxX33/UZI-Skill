@@ -30,6 +30,7 @@ def _reset_profile_env():
         "UZI_DEPTH",
         "UZI_LITE",
         "UZI_CLI_ONLY",
+        "CI",
         "UZI_SKIP_BONUS_FETCHERS",
         "UZI_STAGE2_SKIP_OPTIONAL_RENDERS",
     ):

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import errno
+import queue
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -160,6 +162,23 @@ def test_safe_send_message_swallows_send_errors():
     bot._safe_send_message(123, "hello", reply_to_message_id=456)
 
 
+def test_safe_send_message_redacts_token_from_errors(capsys):
+    token = "123456:SECRET"
+    bot = object.__new__(UziTelegramBot)
+    bot.token = token
+
+    def failing_send_message(*args, **kwargs):
+        raise RuntimeError(f"send failed for {token}")
+
+    setattr(bot, "send_message", failing_send_message)
+
+    bot._safe_send_message(123, "hello", reply_to_message_id=456)
+
+    stderr = capsys.readouterr().err
+    assert token not in stderr
+    assert "<redacted>" in stderr
+
+
 def test_build_session_disables_env_proxy_by_default(monkeypatch):
     monkeypatch.delenv("UZI_TELEGRAM_USE_ENV_PROXY", raising=False)
 
@@ -203,6 +222,10 @@ def test_run_uzi_enables_fast_path_envs_by_default(monkeypatch, tmp_path: Path):
     captured: dict[str, Any] = {}
     report = tmp_path / "full-report-standalone.html"
     report.write_text("ok", encoding="utf-8")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "secret-token")
+    monkeypatch.setenv("TELEGRAM_GROUP_ID", "-100123")
+    monkeypatch.setenv("UZI_SKIP_BONUS_FETCHERS", "0")
+    monkeypatch.setenv("UZI_STAGE2_SKIP_OPTIONAL_RENDERS", "0")
 
     bot = object.__new__(UziTelegramBot)
     bot.python_bin = Path("/usr/bin/python3")
@@ -233,12 +256,16 @@ def test_run_uzi_enables_fast_path_envs_by_default(monkeypatch, tmp_path: Path):
     assert env["UZI_NO_UPDATE_CHECK"] == "1"
     assert env["UZI_SKIP_BONUS_FETCHERS"] == "1"
     assert env["UZI_STAGE2_SKIP_OPTIONAL_RENDERS"] == "1"
+    assert "TELEGRAM_BOT_TOKEN" not in env
+    assert "TELEGRAM_GROUP_ID" not in env
 
 
 def test_run_uzi_allows_opt_in_full_extras(monkeypatch, tmp_path: Path):
     captured: dict[str, Any] = {}
     report = tmp_path / "full-report-standalone.html"
     report.write_text("ok", encoding="utf-8")
+    monkeypatch.setenv("UZI_SKIP_BONUS_FETCHERS", "1")
+    monkeypatch.setenv("UZI_STAGE2_SKIP_OPTIONAL_RENDERS", "1")
 
     bot = object.__new__(UziTelegramBot)
     bot.python_bin = Path("/usr/bin/python3")
@@ -319,6 +346,148 @@ def test_api_uses_default_timeout_for_non_polling_calls():
     assert captured["timeout"] == 60
 
 
+def test_api_redacts_token_from_http_errors():
+    token = "123456:SECRET"
+    bot = object.__new__(UziTelegramBot)
+    session = requests.Session()
+
+    def fake_post(url, **kwargs):
+        response = requests.Response()
+        response.status_code = 401
+        response.url = url
+        response._content = b'{"ok": false, "description": "Unauthorized"}'
+        response.encoding = "utf-8"
+        return response
+
+    setattr(session, "post", fake_post)
+    bot.session = session
+    bot.base_url = f"https://api.telegram.org/bot{token}"
+    bot.token = token
+    bot.poll_timeout = 75
+
+    try:
+        bot._api("sendMessage", json_body={"chat_id": 1, "text": "hello"})
+    except RuntimeError as exc:
+        error = str(exc)
+    else:
+        raise AssertionError("expected Telegram HTTP error")
+
+    assert token not in error
+    assert "<redacted>" in error
+
+
+def test_api_redacts_token_from_api_payload_errors():
+    token = "123456:SECRET"
+    bot = object.__new__(UziTelegramBot)
+    session = requests.Session()
+
+    def fake_post(url, **kwargs):
+        response = requests.Response()
+        response.status_code = 200
+        response._content = b'{"ok": false, "description": "bad token 123456:SECRET"}'
+        response.encoding = "utf-8"
+        return response
+
+    setattr(session, "post", fake_post)
+    bot.session = session
+    bot.base_url = f"https://api.telegram.org/bot{token}"
+    bot.token = token
+    bot.poll_timeout = 75
+
+    try:
+        bot._api("sendMessage", json_body={"chat_id": 1, "text": "hello"})
+    except RuntimeError as exc:
+        error = str(exc)
+    else:
+        raise AssertionError("expected Telegram API payload error")
+
+    assert token not in error
+    assert "<redacted>" in error
+
+
+def test_worker_loop_redacts_token_from_failure_message():
+    token = "123456:SECRET"
+    bot = object.__new__(UziTelegramBot)
+    bot.token = token
+    stop_event = threading.Event()
+
+    class StopAfterTaskQueue(queue.Queue[dict[str, Any]]):
+        def task_done(self):
+            super().task_done()
+            stop_event.set()
+
+    bot.jobs = StopAfterTaskQueue()
+    bot.jobs.put(
+        {
+            "chat_id": 123,
+            "message_id": 456,
+            "message_thread_id": None,
+            "query": "600519.SH",
+        }
+    )
+    sent_messages: list[str] = []
+
+    bot.stop_event = stop_event
+
+    def failing_run_uzi(query: str):
+        raise RuntimeError(f"analysis failed for {token}")
+
+    def fake_safe_send_message(chat_id, text, **kwargs):
+        sent_messages.append(text)
+
+    setattr(bot, "run_uzi", failing_run_uzi)
+    setattr(bot, "_safe_send_message", fake_safe_send_message)
+
+    bot.worker_loop()
+
+    failure_message = sent_messages[-1]
+    assert token not in failure_message
+    assert "<redacted>" in failure_message
+
+
+def test_poll_loop_redacts_token_from_stderr(monkeypatch, capsys, tmp_path: Path):
+    token = "123456:SECRET"
+    bot = object.__new__(UziTelegramBot)
+    bot.token = token
+    bot.bot_username = "uzi_robot"
+    bot.allowed_group_id = -100123
+    bot.python_bin = Path("/usr/bin/python3")
+    bot.can_read_all_group_messages = True
+    bot.public_base_url = "https://unit-test.trycloudflare.com"
+    bot.lease_store = LeaseStore(
+        tmp_path / "leases.json", public_dir=tmp_path / "public", ttl_seconds=60
+    )
+
+    class FakeThread:
+        def __init__(self, target=None, daemon=None):
+            self.target = target
+            self.daemon = daemon
+
+        def start(self):
+            return None
+
+    bot.stop_event = threading.Event()
+
+    setattr(bot, "delete_webhook", lambda: None)
+    setattr(bot, "ensure_public_endpoint", lambda: None)
+    setattr(bot, "cleanup_loop", lambda: None)
+    setattr(bot, "worker_loop", lambda: None)
+
+    def failing_poll_updates():
+        bot.stop_event.set()
+        raise RuntimeError(token)
+
+    setattr(bot, "poll_updates", failing_poll_updates)
+    setattr(bot, "shutdown", lambda: None)
+    monkeypatch.setattr("telegram_uzi_bot.threading.Thread", FakeThread)
+
+    bot.run()
+
+    stderr = capsys.readouterr().err
+    assert token not in stderr
+    assert "<redacted>" in stderr
+
+
 def test_ensure_public_endpoint_falls_back_to_ephemeral_port(
     monkeypatch, tmp_path: Path
 ):
@@ -332,18 +501,19 @@ def test_ensure_public_endpoint_falls_back_to_ephemeral_port(
     created_ports: list[int] = []
 
     class FakeServer:
-        def __init__(self, port: int):
-            self.server_address = ("0.0.0.0", 43123 if port == 0 else port)
+        def __init__(self, host: str, port: int):
+            self.server_address = (host, 43123 if port == 0 else port)
 
         def serve_forever(self):
             return None
 
     def fake_server(address, handler):
+        assert address[0] == "127.0.0.1"
         port = int(address[1])
         created_ports.append(port)
         if port == 8988:
             raise OSError(errno.EADDRINUSE, "Address already in use")
-        return FakeServer(port)
+        return FakeServer(str(address[0]), port)
 
     started_threads: list[object] = []
 
@@ -386,3 +556,90 @@ def test_ensure_public_endpoint_falls_back_to_ephemeral_port(
     assert bot.httpd is not None
     assert started_threads
     assert bot.public_base_url == "https://unit-test.trycloudflare.com"
+
+
+def test_ensure_public_endpoint_shuts_down_local_server_on_tunnel_failure(
+    monkeypatch, tmp_path: Path
+):
+    bot = object.__new__(UziTelegramBot)
+    bot.httpd = None
+    bot.tunnel_proc = None
+    bot.public_base_url = None
+    bot.public_dir = tmp_path
+    bot.port = 8988
+
+    class FakeServer:
+        def __init__(self):
+            self.server_address = ("127.0.0.1", 8988)
+            self.shutdown_called = False
+            self.server_close_called = False
+
+        def serve_forever(self):
+            return None
+
+        def shutdown(self):
+            self.shutdown_called = True
+
+        def server_close(self):
+            self.server_close_called = True
+
+    fake_server_instance = FakeServer()
+
+    class FakeThread:
+        def __init__(self, target=None, daemon=None):
+            self.target = target
+            self.daemon = daemon
+
+        def start(self):
+            return None
+
+    class FakeStream:
+        def readline(self):
+            return ""
+
+    class FakeProc:
+        def __init__(self):
+            self.stderr = FakeStream()
+            self.stdout = FakeStream()
+            self.terminated = False
+            self.killed = False
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            self.terminated = True
+
+        def wait(self, timeout=None):
+            return 0
+
+        def kill(self):
+            self.killed = True
+
+    now_values = iter([0, 31])
+    fake_proc = FakeProc()
+
+    monkeypatch.setattr(
+        "telegram_uzi_bot.ThreadingHTTPServer",
+        lambda address, handler: fake_server_instance,
+    )
+    monkeypatch.setattr("telegram_uzi_bot.threading.Thread", FakeThread)
+    monkeypatch.setattr(bot, "ensure_cloudflared", lambda: Path("/tmp/cloudflared"))
+    monkeypatch.setattr(
+        "telegram_uzi_bot.subprocess.Popen", lambda *args, **kwargs: fake_proc
+    )
+    monkeypatch.setattr("telegram_uzi_bot.now_ts", lambda: next(now_values))
+
+    try:
+        bot.ensure_public_endpoint()
+    except RuntimeError as exc:
+        assert "public URL" in str(exc)
+    else:
+        raise AssertionError("expected tunnel startup failure")
+
+    assert fake_server_instance.shutdown_called is True
+    assert fake_server_instance.server_close_called is True
+    assert fake_proc.terminated is True
+    assert fake_proc.killed is False
+    assert bot.httpd is None
+    assert bot.tunnel_proc is None
