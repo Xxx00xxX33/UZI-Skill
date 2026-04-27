@@ -546,6 +546,19 @@ def assemble(ticker: str) -> Path:
         _render_institutional_section(raw),
     )
 
+    # v2.10 / v3.3 · Segmental Revenue Build-Up（分业务收入模型）
+    # 仅当 segmental_model.json 存在时渲染（agent 跑 /segmental-model 才生成）
+    try:
+        from lib.report.segmental import _render_segmental_block
+        seg_html = _render_segmental_block(ticker)
+    except Exception as _e:
+        print(f"   ⚠️ segmental block 跳过: {type(_e).__name__}: {str(_e)[:80]}")
+        seg_html = ""
+    template = template.replace(
+        "<!-- INJECT_SEGMENTAL -->",
+        seg_html,
+    )
+
     # v2.3 · Data quality banner (only renders when synthesis.data_gaps present)
     template = template.replace(
         "<!-- INJECT_DATA_GAP_BANNER -->",

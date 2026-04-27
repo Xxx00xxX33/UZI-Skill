@@ -2254,6 +2254,231 @@ footer strong { color: var(--text-dim); }
   .fighter .confidence { font-size: 64px; }
   .jury-seats { grid-template-columns: repeat(4, 1fr); }
 }
+
+/* ─── v3.3 · Segmental Revenue Build-Up CSS (from v2.10 feature) ─── */
+.segmental-section {
+  background: linear-gradient(135deg, rgba(8,145,178,0.04) 0%, rgba(217,119,6,0.04) 100%);
+  border: 1px solid rgba(8,145,178,0.15);
+  border-radius: 12px;
+  padding: 24px;
+  margin: 32px 0;
+}
+.seg-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid rgba(8,145,178,0.12);
+}
+.seg-section-title .section-tag {
+  display: inline-block;
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: #0891b2;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+.seg-section-title h3 {
+  margin: 0;
+  font-size: 20px;
+  color: #0f172a;
+  font-weight: 700;
+}
+.seg-badges { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.seg-thesis {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  padding: 12px 16px;
+  background: rgba(255,255,255,0.6);
+  border-left: 3px solid #0891b2;
+  border-radius: 6px;
+  margin-bottom: 20px;
+}
+.seg-thesis .lbl {
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: #0891b2;
+  font-weight: 700;
+  white-space: nowrap;
+  padding-top: 2px;
+}
+.seg-thesis .txt { font-size: 14px; color: #1e293b; line-height: 1.55; }
+
+.seg-charts-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 240px) 1fr;
+  gap: 20px;
+  align-items: start;
+  margin-bottom: 20px;
+}
+.seg-chart-cell {
+  background: rgba(255,255,255,0.5);
+  border-radius: 8px;
+  padding: 14px;
+}
+.seg-chart-title {
+  font-size: 11px;
+  color: #64748b;
+  margin-bottom: 8px;
+  letter-spacing: 1px;
+}
+
+.seg-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+}
+.seg-card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+.seg-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.seg-icon { font-size: 18px; }
+.seg-name { font-size: 15px; font-weight: 700; color: #0f172a; }
+.seg-tag {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+.seg-share {
+  margin-left: auto;
+  font-size: 13px;
+  color: #64748b;
+  font-weight: 600;
+}
+.seg-rev {
+  font-size: 12px;
+  color: #64748b;
+  margin-bottom: 10px;
+}
+.seg-rev strong {
+  font-size: 18px;
+  color: #0f172a;
+  font-weight: 700;
+}
+.seg-drivers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.seg-driver {
+  font-size: 11px;
+  padding: 3px 8px;
+  background: #f1f5f9;
+  border-radius: 4px;
+  color: #334155;
+}
+.seg-driver.muted { color: #94a3b8; font-style: italic; }
+.seg-cagr {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-top: 6px;
+}
+.cagr-cell {
+  text-align: center;
+  padding: 8px 4px;
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cagr-cell .lbl { font-size: 9px; letter-spacing: 1px; font-weight: 700; opacity: 0.75; }
+.cagr-cell .val { font-size: 15px; font-weight: 700; }
+.cagr-cell .end { font-size: 10px; opacity: 0.7; margin-top: 2px; }
+.cagr-cell.bull { background: rgba(5,150,105,0.08); color: #059669; }
+.cagr-cell.base { background: rgba(217,119,6,0.08); color: #d97706; }
+.cagr-cell.bear { background: rgba(220,38,38,0.08); color: #dc2626; }
+
+/* v2.10+ · 卡片新富字段 */
+.seg-metrics-row {
+  display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 8px;
+  padding: 6px 10px; background: #f8fafc; border-radius: 4px;
+}
+.seg-metric { font-size: 11px; color: #64748b; }
+.seg-metric strong { font-size: 13px; }
+.seg-metric small { font-size: 10px; opacity: 0.85; }
+
+.seg-spark {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 10px; padding: 4px 6px;
+  background: rgba(241,245,249,0.5); border-radius: 4px;
+}
+.spark-lbl { font-size: 9px; color: #94a3b8; white-space: nowrap; }
+.spark-val { font-size: 11px; color: #0f172a; font-weight: 700; margin-left: auto; }
+
+/* v2.10+ · 3×3 projection 表 */
+.seg-projection-table-wrap {
+  background: rgba(255,255,255,0.6);
+  border-radius: 8px;
+  padding: 14px;
+  margin-bottom: 20px;
+  overflow-x: auto;
+}
+.seg-projection-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  margin-top: 8px;
+}
+.seg-projection-table th, .seg-projection-table td {
+  padding: 6px 8px;
+  text-align: right;
+  border-bottom: 1px solid #e2e8f0;
+}
+.seg-projection-table th.bull { background: rgba(5,150,105,0.12); color: #059669; font-weight: 700; }
+.seg-projection-table th.base { background: rgba(217,119,6,0.12); color: #d97706; font-weight: 700; }
+.seg-projection-table th.bear { background: rgba(220,38,38,0.12); color: #dc2626; font-weight: 700; }
+.seg-projection-table td.bull { background: rgba(5,150,105,0.04); color: #059669; }
+.seg-projection-table td.base { background: rgba(217,119,6,0.04); color: #d97706; }
+.seg-projection-table td.bear { background: rgba(220,38,38,0.04); color: #dc2626; }
+.seg-tbl-name { text-align: left !important; color: #0f172a; font-weight: 600; }
+.seg-tbl-cur { color: #64748b; font-weight: 600; }
+.seg-tbl-total { background: rgba(8,145,178,0.05); border-top: 2px solid #0891b2; }
+.seg-note {
+  margin-top: 10px;
+  font-size: 11px;
+  color: #64748b;
+  font-style: italic;
+  padding: 6px 10px;
+  background: rgba(251,191,36,0.08);
+  border-radius: 4px;
+}
+.seg-warnings {
+  margin-top: 14px;
+  font-size: 11px;
+  color: #d97706;
+  padding: 8px 12px;
+  background: rgba(251,191,36,0.1);
+  border-radius: 4px;
+  border-left: 3px solid #d97706;
+}
+.seg-source {
+  margin-top: 10px;
+  font-size: 10px;
+  color: #94a3b8;
+  text-align: center;
+  letter-spacing: 0.5px;
+}
+@media (max-width: 800px) {
+  .seg-charts-grid { grid-template-columns: 1fr; }
+}
+
 </style>
 </head>
 <body>
@@ -2542,6 +2767,9 @@ footer strong { color: var(--text-dim); }
   <div class="inst-modeling-wrap" style="padding:0 4px">
     <!-- INJECT_INSTITUTIONAL_MODELING -->
   </div>
+
+  <!-- v3.3 · 分业务收入模型 (segmental_model.json 存在时才渲染) -->
+  <!-- INJECT_SEGMENTAL -->
 
   <!-- ─── RISKS ─── -->
   <div class="section-head">
