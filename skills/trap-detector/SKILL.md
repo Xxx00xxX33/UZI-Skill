@@ -1,6 +1,13 @@
 ---
 name: trap-detector
 description: 杀猪盘检测器。当用户提到"朋友推荐"、"群里说"、"老师带"、"内幕消息"、"小红书 / 抖音看到推荐"等关键词，或显式要求"看看是不是杀猪盘 / 检测一下风险 / 这只票安全吗"时使用。扫描 8 个信号给出风险评级 🟢🟡🟠🔴。
+version: 3.3.1
+author: FloatFu-true
+license: MIT
+metadata:
+  hermes:
+    tags: [finance, a-share, trap-detection, risk, pump-and-dump, fraud-detection]
+    related_skills: [deep-analysis]
 ---
 
 # Trap Detector · 杀猪盘检测器

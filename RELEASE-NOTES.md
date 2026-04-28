@@ -1,5 +1,65 @@
 # Release Notes
 
+## v3.3.1 — 2026-04-28 (Hermes 兼容回归修复)
+
+> **用户反馈**："UZI-Skill 是不是更新了不支持 hermes，之前的可以，现在开始报错了"
+
+### 根因
+
+v3.0/v3.1/v3.2 重构期间 main 上**完全没有 hermes 兼容代码**：
+
+- ❌ `INSTALL-HERMES.md` 不存在
+- ❌ `skills/deep-analysis/run.py` 不存在（hermes skill-dir 入口）
+- ❌ `skills/deep-analysis/requirements.txt` 不存在
+- ❌ 4 个 `SKILL.md` 没有 `metadata.hermes` 字段
+- ❌ `run.py` 路径硬编码 `skills/deep-analysis/scripts` · 不支持 hermes 装的 skill-dir layout
+
+但 README 仍写"Hermes：`hermes skills install wbh604/UZI-Skill/skills/deep-analysis`" · hermes 用户照做后装下来的目录缺关键文件 · 报错.
+
+`hermes-compat` 分支早在 v2.10.8 加过这些适配代码 · 但 v3.x 重构时**没有合回 main** · 同时 hermes-compat 分支自己也停滞在 v2.10.8 时代 · 落后 main 58 commit.
+
+### 修复
+
+把 hermes 兼容核心文件合并到 main：
+
+1. **`run.py` 路径双 layout 探测**（additive）：
+   ```python
+   _layout_candidates = [
+       ROOT_DIR / "skills" / "deep-analysis" / "scripts",  # repo root layout
+       ROOT_DIR / "scripts",                               # Hermes skill-dir layout
+   ]
+   SCRIPTS_DIR = next((c for c in _layout_candidates if c.exists()), _layout_candidates[0])
+   ```
+2. **新增 `skills/deep-analysis/run.py`**：完整 v3.0+ run.py 拷贝（含 pipeline 默认 / UZI_LEGACY / 自动更新检测）· hermes skill-dir layout 下作 entry
+3. **新增 `skills/deep-analysis/requirements.txt`**：hermes 安装时的 dep 清单
+4. **新增 `INSTALL-HERMES.md`**：v3.3.1 适配的安装指南（含旧版升级指引）
+5. **4 个 SKILL.md 加 hermes metadata**：`tags` + `related_skills` 让 hermes 知道 skill 关系
+6. **同步 hermes-compat 分支** = main（让该分支也包含 v3.x 全部功能）
+
+### 验证
+
+- 332 tests 全过
+- Hermes layout 模拟 e2e（`/tmp/hermes-test-skill/run.py 002217.SZ --no-browser`）：614 KB HTML 出报告 · 走 v3.0 pipeline · 跟 repo-root layout 行为一致
+- Repo root layout（`python run.py 002217.SZ`）仍正常
+
+### 升级建议（hermes 用户）
+
+旧版本 skill 目录残留可能导致冲突 · 重装：
+
+```bash
+hermes skills uninstall deep-analysis investor-panel lhb-analyzer trap-detector
+hermes skills install wbh604/UZI-Skill/skills/deep-analysis
+hermes skills install wbh604/UZI-Skill/skills/investor-panel
+hermes skills install wbh604/UZI-Skill/skills/lhb-analyzer
+hermes skills install wbh604/UZI-Skill/skills/trap-detector
+```
+
+### Hermes 现在跟 main 完全对齐
+
+之前 README 推荐 hermes 用户走 `hermes-compat` 分支 · 现在直接装 main 即可（v3.0 pipeline / v3.1 rrt 瘦身 / v3.2 assemble_report 拆分 / v3.3 segmental 全部可用）.
+
+---
+
 ## v3.2.0 — 2026-04-23 (assemble_report.py 深度拆分 · -80%)
 
 > **用户反馈**："后面的继续全部完成 · 你就干就得了"
